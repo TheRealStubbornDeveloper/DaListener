@@ -31,6 +31,11 @@ def _register_windows_runtime_dirs() -> None:
         candidates.append(Path(PySide6.__file__).parent)
     except ImportError:
         pass
+    try:
+        from .capability import _register_cuda_runtime_dirs
+        _register_cuda_runtime_dirs()
+    except ImportError:
+        pass
     for directory in candidates:
         if directory.exists():
             _DLL_DIR_HANDLES.append(os.add_dll_directory(str(directory)))

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dalistener"
-version = "0.1.1"
+version = "0.2.0a1"
 description = "Local, Windows-first live transcription for microphone and system audio"
 requires-python = ">=3.11"
 dependencies = [
@@ -17,8 +17,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-best = ["faster-whisper>=1.1"]
+best = [
+  "faster-whisper>=1.1",
+  "nvidia-cublas-cu12>=12.9; platform_system == 'Windows'",
+  "nvidia-cudnn-cu12>=9.0; platform_system == 'Windows'",
+]
 test = ["pytest>=8.0"]
+build = ["pyinstaller>=6.0"]
 
 [project.scripts]
 dalistener = "dalistener.app:main"

@@ -6,6 +6,7 @@ import json
 import os
 import platform
 import subprocess
+import sys
 import time
 import ctypes
 from dataclasses import replace
@@ -17,8 +18,42 @@ import psutil
 from .models import CapabilityReport, PerformanceRating, QualityMode
 
 
-APP_VERSION = "0.1.1"
+APP_VERSION = "0.2.0a1"
 MODEL_VERSION = "moonshine-streaming-2026-dual-lane-calibration-v3"
+_CUDA_DLL_DIR_HANDLES: list[object] = []
+_CUDA_REGISTERED_DIRS: set[str] = set()
+
+
+def _register_cuda_runtime_dirs() -> list[Path]:
+    """Make system and pip-installed NVIDIA runtime DLLs discoverable."""
+    if platform.system() != "Windows" or not hasattr(os, "add_dll_directory"):
+        return []
+
+    candidates: list[Path] = []
+    for variable in ("CUDA_PATH", "CUDA_PATH_V12_9", "CUDNN_PATH"):
+        if os.environ.get(variable):
+            root = Path(os.environ[variable])
+            candidates.extend((root / "bin", root / "bin" / "x64"))
+
+    site_packages = Path(sys.prefix) / "Lib" / "site-packages"
+    candidates.extend((
+        site_packages / "nvidia" / "cublas" / "bin",
+        site_packages / "nvidia" / "cudnn" / "bin",
+        site_packages / "nvidia" / "cuda_nvrtc" / "bin",
+    ))
+
+    registered: list[Path] = []
+    for directory in candidates:
+        key = str(directory.resolve()).lower() if directory.exists() else ""
+        if not key or key in _CUDA_REGISTERED_DIRS:
+            continue
+        try:
+            _CUDA_DLL_DIR_HANDLES.append(os.add_dll_directory(str(directory)))
+            _CUDA_REGISTERED_DIRS.add(key)
+            registered.append(directory)
+        except OSError:
+            continue
+    return registered
 
 
 def _run_json(command: list[str]) -> object | None:
@@ -100,6 +135,7 @@ def _providers(gpu_name: str | None) -> list[str]:
 
 
 def _cuda_runtime_ready() -> bool:
+    _register_cuda_runtime_dirs()
     if platform.system() == "Windows":
         required = ("cublas64_12.dll", "cudnn64_9.dll")
     else:

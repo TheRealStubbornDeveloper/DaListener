@@ -5,7 +5,7 @@
 [![Windows](https://img.shields.io/badge/Windows-11%20%7C%2010-2f81f7?logo=windows)](https://www.microsoft.com/windows)
 [![Python](https://img.shields.io/badge/Python-3.11%2B-3776ab?logo=python&logoColor=white)](https://www.python.org/)
 [![Local processing](https://img.shields.io/badge/processing-local-3fb950)](#privacy)
-[![Version](https://img.shields.io/badge/version-0.1.1-d29922)](https://github.com/TheRealStubbornDeveloper/DaListener)
+[![Version](https://img.shields.io/badge/version-0.2.0--alpha.1-d29922)](https://github.com/TheRealStubbornDeveloper/DaListener)
 
 DaListener captures a microphone, Windows system audio, or both at once and turns them into separate, searchable transcript lanes. Speech recognition runs locally; raw audio is discarded by default.
 
@@ -44,6 +44,17 @@ The screenshot below was produced from an actual 20-second WASAPI loopback test�
 
 The test also exposed Media Foundation buffer-discontinuity warnings on this particular endpoint. Recognition completed successfully, but extended device-matrix and soak testing remains part of the Windows stabilization work.
 
+## Measured performance
+
+On a Ryzen 7 5700X and RTX 3090, the same Whisper `large-v3-turbo` model processed a 20-second clip in **6.176 seconds on CPU** and **0.288 seconds on GPU**. That makes GPU inference **21.44× faster** in this test; both paths produced the same transcript.
+
+| Device | Median inference | Processing rate |
+|---|---:|---:|
+| Ryzen 7 5700X, INT8 | 6.176 s | 3.24× real time |
+| RTX 3090, INT8/FP16 | 0.288 s | 69.43× real time |
+
+See the [benchmark methodology and raw results](docs/BENCHMARKS.md). These numbers measure throughput for one machine and utterance, not guaranteed latency or accuracy.
+
 ## Install on Windows
 
 Requirements:
@@ -62,6 +73,18 @@ run.bat
 
 The first launch downloads the recommended English model and runs a local dual-lane speech calibration. Later launches reuse both the model and capability report until relevant hardware, runtime, or model details change.
 
+### Download the test build
+
+Download [`DaListener-0.2.0-alpha.1-windows-x64.zip`](https://github.com/TheRealStubbornDeveloper/DaListener/releases/tag/v0.2.0-alpha.1), choose **Extract All**, and run `DaListener.exe`. Do not run it inside the ZIP. The first launch needs internet access to download the selected speech model; transcription is local afterward.
+
+This is an unsigned test build, so Windows SmartScreen may show an unknown-publisher warning. Verify that the ZIP came from this repository and that its SHA-256 is:
+
+```text
+8b1504756951fdcc31f0fa381e81049469f65dc96f7f05ddbe0a4ef43dd3fc98
+```
+
+The archive includes CPU transcription and the optional Whisper engine, but not the roughly 1.3 GB NVIDIA compatibility runtime. It uses Best mode when CUDA 12 cuBLAS and cuDNN 9 DLLs are available globally; otherwise it transparently uses Balanced CPU mode.
+
 ### Developer setup
 
 ```powershell
@@ -79,30 +102,36 @@ python -m pytest
 
 ## Enable NVIDIA Best mode
 
-Best mode currently requires the CUDA 12 build of cuBLAS, cuDNN 9, and the optional Whisper runtime. A modern NVIDIA driver alone is not enough.
+Best mode requires the CUDA 12 build of cuBLAS, cuDNN 9, and the optional Whisper runtime. A modern NVIDIA driver is required, but the globally installed CUDA Toolkit may be a different version because the development setup isolates compatible libraries inside `.venv`.
 
 1. Install or update the NVIDIA display driver.
-2. Install a **CUDA 12.x Toolkit** from the [official CUDA downloads](https://developer.nvidia.com/cuda-downloads). CUDA 12.9 is compatible with the current CUDA 12 dependency family.
-3. Install **cuDNN 9 for CUDA 12** using NVIDIA's Windows installer. Ensure its `bin` directory is on the system `PATH`.
-4. Open a new terminal and install DaListener's optional runtime:
+2. Open a terminal in the source checkout and install DaListener's optional runtime. On Windows this installs NVIDIA's CUDA 12.9 cuBLAS and cuDNN 9 wheels inside the virtual environment:
 
 ```powershell
 .venv\Scripts\Activate.ps1
 python -m pip install -e ".[best]"
 ```
 
-5. Verify the exact DLLs DaListener needs:
+3. Verify detection and load the actual finalizer:
 
 ```powershell
 nvidia-smi
-where.exe cublas64_12.dll
-where.exe cudnn64_9.dll
-python -c "import ctypes; ctypes.CDLL('cublas64_12.dll'); ctypes.CDLL('cudnn64_9.dll'); print('CUDA runtime ready')"
+python -c "from pathlib import Path; from dalistener.capability import CapabilityService; r=CapabilityService(Path('build/cuda-check.json')).inspect(); print(r.quality_mode.value, r.model_name, r.downgrade_reasons)"
 ```
 
-Restart DaListener. Its capability card should show **Quality: Best** and list GPU refinement. If either DLL cannot be loaded, the app safely remains in Balanced CPU mode and explains the downgrade.
+Restart DaListener. Its capability card should show **Quality: Best** and list GPU refinement. If a required DLL cannot be loaded, the app safely remains in Balanced CPU mode and explains the downgrade.
+
+For the packaged test build, install CUDA 12.x and cuDNN 9 globally and place their `bin` directories on `PATH`, or use the source installation above. A CUDA 13 toolkit provides `cublas64_13.dll`, which does not replace the `cublas64_12.dll` required by the current CTranslate2 build.
 
 See NVIDIA's [CUDA installation guide for Windows](https://docs.nvidia.com/cuda/cuda-installation-guide-microsoft-windows/) and [cuDNN Windows installation guide](https://docs.nvidia.com/deeplearning/cudnn/installation/latest/windows.html) for authoritative compatibility and installation details.
+
+## Build the Windows archive
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-release.ps1
+```
+
+The onedir application and ZIP are written under `dist/`. Build output, downloaded models, databases, and virtual environments are ignored by Git.
 
 ## Native-core direction
 

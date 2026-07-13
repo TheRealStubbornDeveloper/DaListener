@@ -1,0 +1,33 @@
+{
+  "date": "2026-07-14",
+  "system": {
+    "os": "Windows 11 10.0.26200",
+    "cpu": "AMD Ryzen 7 5700X 8-Core Processor",
+    "gpu": "NVIDIA GeForce RTX 3090 24 GB",
+    "driver": "610.62",
+    "driver_cuda_capability": "13.3",
+    "compatibility_runtime": "CUDA 12.9 cuBLAS + cuDNN 9.24 pip wheels",
+    "audio_seconds": 20.0,
+    "model": "faster-whisper large-v3-turbo",
+    "rounds": 3,
+    "warmup_rounds": 1
+  },
+  "cpu": {
+    "compute_type": "int8",
+    "model_load_seconds": 6.054,
+    "median_inference_seconds": 6.176,
+    "real_time_factor": 0.3088,
+    "realtime_speedup": 3.24,
+    "round_seconds": [6.889, 6.176, 6.11]
+  },
+  "gpu": {
+    "compute_type": "int8_float16",
+    "model_load_seconds": 3.851,
+    "median_inference_seconds": 0.288,
+    "real_time_factor": 0.0144,
+    "realtime_speedup": 69.43,
+    "round_seconds": [0.291, 0.287, 0.288]
+  },
+  "gpu_vs_cpu_inference_speedup": 21.44,
+  "transcripts_matched": true
+}
