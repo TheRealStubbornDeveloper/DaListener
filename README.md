@@ -84,6 +84,8 @@ Best mode uses `large-v3-turbo` on NVIDIA CUDA. Balanced CPU mode uses multiling
 
 Download [`DaListener-0.2.0-alpha.4-windows-x64.zip`](https://github.com/TheRealStubbornDeveloper/DaListener/releases/tag/v0.2.0-alpha.4), choose **Extract All**, and run `DaListener.exe`. Do not run it inside the ZIP. The first launch needs internet access to download the selected speech model; transcription is local afterward.
 
+The GitHub release contains a portable **onedir** build, not an installer. After extraction, keep `DaListener.exe` beside its `_internal` directory. Moving only the EXE will prevent it from starting.
+
 This is an unsigned test build, so Windows SmartScreen may show an unknown-publisher warning. Verify that the ZIP came from this repository and that its SHA-256 is:
 
 ```text
@@ -91,6 +93,25 @@ This is an unsigned test build, so Windows SmartScreen may show an unknown-publi
 ```
 
 The archive includes CPU transcription and the optional Whisper engine, but not the roughly 1.3 GB NVIDIA compatibility runtime. It uses Best mode when CUDA 12 cuBLAS and cuDNN 9 DLLs are available globally; otherwise it transparently uses Balanced CPU mode.
+
+### Where DaListener puts files
+
+| Item | Default location | Purpose |
+|---|---|---|
+| Downloaded release | Wherever you extract the ZIP, for example `C:\Apps\DaListener\DaListener.exe` | Portable packaged application; keep the entire extracted folder together |
+| Source-run launcher | Repository `run.bat` | Starts the editable development installation from `.venv` |
+| Source virtual environment | `<repository>\.venv` | Python and development dependencies |
+| Local build folder | `<repository>\dist\DaListener\DaListener.exe` | Uncompressed onedir build made by `build-release.ps1` |
+| Release archive | `<repository>\dist\DaListener-0.2.0-alpha.4-windows-x64.zip` | File uploaded to GitHub Releases |
+| Intermediate build files | `<repository>\build` | Disposable PyInstaller analysis and temporary test output |
+| Timestamped transcripts | `%LOCALAPPDATA%\DaListener\Transcripts` | User-facing plain-text transcripts created when listening stops |
+| Moonshine models | `%LOCALAPPDATA%\DaListener\models` | Downloaded streaming ASR model files |
+| Whisper models | `%USERPROFILE%\.cache\huggingface\hub` | Hugging Face cache for Tiny, Small, or `large-v3-turbo` |
+| Settings | `%LOCALAPPDATA%\DaListener\settings.json` | Consent, language, and last-used source choices |
+| Capability report | `%LOCALAPPDATA%\DaListener\capability.json` | Cached hardware/model selection and calibration |
+| Recovery history | `%LOCALAPPDATA%\DaListener\sessions.db` | Internal crash recovery and in-app session history |
+
+Paste `%LOCALAPPDATA%\DaListener` into File Explorer's address bar to inspect the application data. The model-preparation log is currently shown live inside the app and is not written to a separate log file.
 
 ### Developer setup
 
@@ -138,7 +159,17 @@ See NVIDIA's [CUDA installation guide for Windows](https://docs.nvidia.com/cuda/
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-release.ps1
 ```
 
-The onedir application and ZIP are written under `dist/`. Build output, downloaded models, databases, and virtual environments are ignored by Git.
+The script installs the build dependency into `.venv`, runs PyInstaller from `packaging\dalistener.spec`, and creates:
+
+```text
+dist\
+|-- DaListener\
+|   |-- DaListener.exe
+|   `-- _internal\                 packaged DLLs, Python runtime, and resources
+`-- DaListener-0.2.0-alpha.4-windows-x64.zip
+```
+
+Run `dist\DaListener\DaListener.exe` to smoke-test the unpacked build. Upload the ZIP—not the EXE by itself—to GitHub Releases. `build\` and `dist\` are generated locally and ignored by Git; downloaded models, application data, and `.venv` are also excluded from commits.
 
 ## Native-core direction
 
