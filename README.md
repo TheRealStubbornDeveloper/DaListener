@@ -5,7 +5,7 @@
 [![Windows](https://img.shields.io/badge/Windows-11%20%7C%2010-2f81f7?logo=windows)](https://www.microsoft.com/windows)
 [![Python](https://img.shields.io/badge/Python-3.11%2B-3776ab?logo=python&logoColor=white)](https://www.python.org/)
 [![Local processing](https://img.shields.io/badge/processing-local-3fb950)](#privacy)
-[![Version](https://img.shields.io/badge/version-0.2.0--alpha.3-d29922)](https://github.com/TheRealStubbornDeveloper/DaListener)
+[![Version](https://img.shields.io/badge/version-0.2.0--alpha.4-d29922)](https://github.com/TheRealStubbornDeveloper/DaListener)
 
 DaListener captures a microphone, Windows system audio, or both at once and turns them into separate, searchable transcript lanes. Speech recognition runs locally; raw audio is discarded by default.
 
@@ -21,7 +21,8 @@ DaListener captures a microphone, Windows system audio, or both at once and turn
 - **See words settle.** Draft text updates quickly; finalized utterances become immutable.
 - **Know before you start.** Hardware inspection and real-speech calibration disclose expected latency, quality mode, and memory use.
 - **Stay private.** After model download, transcription is local and audio is not written to disk.
-- **Own the result.** Search, bookmark, copy, retain session history, and export TXT, Markdown, JSON, SRT, or VTT. Save notifications show the exact path and provide an Open folder button.
+- **Speak English or Tagalog.** Automatic mode detects `en` versus `tl` for each completed phrase; explicit English and Tagalog modes are also available.
+- **Own the result.** Search, bookmark, copy, retain session history, and export TXT, Markdown, JSON, SRT, or VTT. Stopping automatically writes a timestamped TXT transcript, shows its exact path, and provides an Open folder button.
 
 ![DaListener capability and source selection screen](docs/screenshots/overview.png)
 
@@ -71,16 +72,22 @@ setup.bat
 run.bat
 ```
 
-The first launch downloads the recommended English model and runs a local dual-lane speech calibration. Later launches reuse both the model and capability report until relevant hardware, runtime, or model details change.
+The first launch downloads the recommended English streaming model plus a multilingual finalizer and runs a local dual-lane speech calibration. Later launches reuse the models and capability report until relevant hardware, runtime, or model details change.
+
+### English and Tagalog
+
+The language selector defaults to **Automatic (English + Tagalog)**. Moonshine supplies fast English-oriented draft text, then multilingual Whisper detects English or Tagalog and replaces the completed phrase with stable text. Tagalog drafts can therefore look inaccurate until the speaker pauses and Whisper finalizes the phrase.
+
+Best mode uses `large-v3-turbo` on NVIDIA CUDA. Balanced CPU mode uses multilingual Whisper Small, while Efficient mode uses Whisper Tiny to stay within a smaller memory budget. Selecting English or Tagalog explicitly disables automatic language detection for more predictable results in single-language sessions.
 
 ### Download the test build
 
-Download [`DaListener-0.2.0-alpha.3-windows-x64.zip`](https://github.com/TheRealStubbornDeveloper/DaListener/releases/tag/v0.2.0-alpha.3), choose **Extract All**, and run `DaListener.exe`. Do not run it inside the ZIP. The first launch needs internet access to download the selected speech model; transcription is local afterward.
+Download [`DaListener-0.2.0-alpha.4-windows-x64.zip`](https://github.com/TheRealStubbornDeveloper/DaListener/releases/tag/v0.2.0-alpha.4), choose **Extract All**, and run `DaListener.exe`. Do not run it inside the ZIP. The first launch needs internet access to download the selected speech model; transcription is local afterward.
 
 This is an unsigned test build, so Windows SmartScreen may show an unknown-publisher warning. Verify that the ZIP came from this repository and that its SHA-256 is:
 
 ```text
-98cc7230a321d70247a19160da57e056eb00fde2fb6db353f3431aa27748e7da
+2a3f63d2055ebc100aeb98c16ce4e2710fb214409036706f28afe32bd9fb4a5c
 ```
 
 The archive includes CPU transcription and the optional Whisper engine, but not the roughly 1.3 GB NVIDIA compatibility runtime. It uses Best mode when CUDA 12 cuBLAS and cuDNN 9 DLLs are available globally; otherwise it transparently uses Balanced CPU mode.
@@ -183,7 +190,7 @@ Moonshine already provides a portable C++ core, a C interface, ONNX Runtime inte
 
 ## Privacy
 
-DaListener stores transcript text, timestamps, source labels, bookmarks, and model/session metadata locally. Raw audio remains in bounded memory and is discarded unless a future explicit retention feature is enabled. Users are responsible for notifying participants and following applicable consent and recording laws.
+When you stop listening, DaListener automatically writes the user-facing transcript to `%LOCALAPPDATA%\DaListener\Transcripts\DaListener-YYYY-MM-DD-HHMMSS-microseconds.txt`. Every line includes its elapsed timestamp and source label. The app shows the exact saved location and an **Open folder** button. SQLite is only an internal crash-recovery/history index, not the transcript file you need to find or share. Raw audio remains in bounded memory and is discarded unless a future explicit retention feature is enabled. Users are responsible for notifying participants and following applicable consent and recording laws.
 
 ## Current boundaries
 

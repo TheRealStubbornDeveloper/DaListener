@@ -7,6 +7,7 @@ import sys
 import threading
 import time
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 
 from platformdirs import user_data_path
@@ -22,7 +23,10 @@ from PySide6.QtWidgets import (
 
 from .audio import AudioDeviceService, CaptureManager
 from .capability import CapabilityService
-from .models import CaptureMode, CaptureSelection, QualityMode, SourceKind, Stability, TranscriptEvent
+from .models import (
+    CaptureMode, CaptureSelection, QualityMode, SourceKind, Stability, TranscriptEvent,
+    TranscriptionLanguage,
+)
 from .session import SessionController
 from .storage import SessionStore, TranscriptExporter
 
@@ -197,19 +201,37 @@ class DaListenerWindow(QMainWindow):
         source_grid.addWidget(QLabel("System output"), 3, 0)
         self.output_combo = QComboBox()
         source_grid.addWidget(self.output_combo, 3, 1, 1, 2)
-        source_grid.addWidget(self._eyebrow("MIC"), 4, 0)
+        source_grid.addWidget(QLabel("Language"), 4, 0)
+        self.language_combo = QComboBox()
+        self.language_labels = {
+            "Automatic (English + Tagalog)": TranscriptionLanguage.AUTO,
+            "English": TranscriptionLanguage.ENGLISH,
+            "Tagalog": TranscriptionLanguage.TAGALOG,
+        }
+        self.language_combo.addItems(self.language_labels)
+        try:
+            saved_language = TranscriptionLanguage(
+                self.settings.get("language", TranscriptionLanguage.AUTO.value)
+            )
+        except ValueError:
+            saved_language = TranscriptionLanguage.AUTO
+        self.language_combo.setCurrentText(next(
+            label for label, value in self.language_labels.items() if value == saved_language
+        ))
+        source_grid.addWidget(self.language_combo, 4, 1, 1, 2)
+        source_grid.addWidget(self._eyebrow("MIC"), 5, 0)
         self.mic_level = QProgressBar()
         self.mic_level.setRange(0, 1000)
         self.mic_level.setTextVisible(False)
-        source_grid.addWidget(self.mic_level, 4, 1)
-        source_grid.addWidget(self._eyebrow("SYSTEM"), 5, 0)
+        source_grid.addWidget(self.mic_level, 5, 1)
+        source_grid.addWidget(self._eyebrow("SYSTEM"), 6, 0)
         self.system_level = QProgressBar()
         self.system_level.setRange(0, 1000)
         self.system_level.setTextVisible(False)
-        source_grid.addWidget(self.system_level, 5, 1)
+        source_grid.addWidget(self.system_level, 6, 1)
         self.test_button = QPushButton("Test selected sources for 3 seconds")
         self.test_button.clicked.connect(self.test_sources)
-        source_grid.addWidget(self.test_button, 6, 0, 1, 3)
+        source_grid.addWidget(self.test_button, 7, 0, 1, 3)
         cards.addWidget(sources, 1)
         root.addLayout(cards)
 
@@ -387,13 +409,18 @@ class DaListenerWindow(QMainWindow):
                 monitor.start()
                 self.controller.prepare(log)
                 report = self.report
-                if report.gpu_refinement and self.controller.engine.finalizer is None:
-                    reason = self.controller.engine.finalizer_error or "GPU refinement could not be initialized"
+                if self.controller.engine.finalizer is None:
+                    reason = self.controller.engine.finalizer_error or "Multilingual finalizer could not be initialized"
+                    downgraded_quality = QualityMode.BALANCED if report.quality_mode == QualityMode.BEST else report.quality_mode
+                    moonshine_name = (
+                        "Moonshine Small Streaming"
+                        if downgraded_quality == QualityMode.EFFICIENT else "Moonshine Medium Streaming"
+                    )
                     report = replace(
                         report,
-                        quality_mode=QualityMode.BALANCED,
-                        model_name="Moonshine Medium Streaming",
-                        estimated_memory_mb=1100,
+                        quality_mode=downgraded_quality,
+                        model_name=moonshine_name,
+                        estimated_memory_mb=700 if downgraded_quality == QualityMode.EFFICIENT else 1100,
                         gpu_refinement=False,
                         downgrade_reasons=[*report.downgrade_reasons, reason],
                     )
@@ -417,7 +444,12 @@ class DaListenerWindow(QMainWindow):
         """Report genuine cache growth and a heartbeat during long native loads."""
         roots = [self.controller.engine.model_dir]
         hf_home = Path(os.environ.get("HF_HOME", Path.home() / ".cache" / "huggingface"))
-        roots.append(hf_home / "hub" / "models--mobiuslabsgmbh--faster-whisper-large-v3-turbo")
+        whisper_cache = (
+            "models--mobiuslabsgmbh--faster-whisper-large-v3-turbo"
+            if self.controller.engine.finalizer_model_name == "large-v3-turbo"
+            else f"models--Systran--faster-whisper-{self.controller.engine.finalizer_model_name}"
+        )
+        roots.append(hf_home / "hub" / whisper_cache)
         baseline: dict[Path, int] = {}
         started = time.monotonic()
 
@@ -497,6 +529,7 @@ class DaListenerWindow(QMainWindow):
             microphone_id=None if mic_default else self.mic_names.get(self.mic_combo.currentText()),
             output_id=None if output_default else self.output_names.get(self.output_combo.currentText()),
             follow_default_microphone=mic_default, follow_default_output=output_default,
+            language=self.language_labels[self.language_combo.currentText()],
         )
 
     def toggle_session(self) -> None:
@@ -516,7 +549,8 @@ class DaListenerWindow(QMainWindow):
             self.live_label.setStyleSheet("color: #3fb950")
             self.settings.update({"capture_mode": selection.mode.value,
                                   "microphone_name": self.mic_combo.currentText(),
-                                  "output_name": self.output_combo.currentText()})
+                                  "output_name": self.output_combo.currentText(),
+                                  "language": selection.language.value})
             self._save_settings()
         except Exception as exc:
             QMessageBox.critical(self, "Could not start listening", str(exc))
@@ -559,7 +593,12 @@ class DaListenerWindow(QMainWindow):
         self.bookmark_button.setEnabled(False)
         self.live_label.setText("● Ready")
         self.live_label.setStyleSheet("color: #8b949e")
-        self._show_save_location(self.store.path, "Transcript saved locally")
+        transcript_dir = self.data_dir / "Transcripts"
+        transcript_dir.mkdir(parents=True, exist_ok=True)
+        transcript_path = transcript_dir / f"DaListener-{datetime.now():%Y-%m-%d-%H%M%S-%f}.txt"
+        if self.last_session_id:
+            self.exporter.export(self.last_session_id, transcript_path)
+        self._show_save_location(transcript_path, "Timestamped transcript saved")
         self.mic_level.setValue(0)
         self.system_level.setValue(0)
         self._refresh_history()
@@ -616,6 +655,10 @@ class DaListenerWindow(QMainWindow):
             self.status_label.setText(event.text)
             return
         self.events[event.source_id][event.utterance_id] = event
+        if event.stability == Stability.FINAL and event.detected_language:
+            name = "Tagalog" if event.detected_language == "tl" else "English"
+            confidence = f" ({event.language_probability:.0%})" if event.language_probability is not None else ""
+            self.status_label.setText(f"{event.source_id.value.title()} finalized as {name}{confidence}")
         self._render_lane(event.source_id)
 
     def _on_status(self, source: str, text: str) -> None:
@@ -662,7 +705,8 @@ class DaListenerWindow(QMainWindow):
         widget.clear()
         for event in sorted(self.events[source].values(), key=lambda e: (e.start_ms, e.utterance_id)):
             seconds = max(0, event.start_ms) // 1000
-            text = f"[{seconds // 60:02}:{seconds % 60:02}] {event.text}\n\n"
+            language = f" · {event.detected_language.upper()}" if event.detected_language else ""
+            text = f"[{seconds // 60:02}:{seconds % 60:02}{language}] {event.text}\n\n"
             cursor = widget.textCursor()
             cursor.movePosition(QTextCursor.End)
             fmt = QTextCharFormat()
@@ -702,6 +746,8 @@ class DaListenerWindow(QMainWindow):
                     session_id=session_id, source_id=source, utterance_id=record["utterance_id"],
                     text=record["text"], start_ms=record["start_ms"], end_ms=record["end_ms"],
                     revision=record["revision"], stability=Stability(record["stability"]),
+                    detected_language=record["detected_language"],
+                    language_probability=record["language_probability"],
                 )
         self._render_all()
         self.status_label.setText("Historical session loaded")

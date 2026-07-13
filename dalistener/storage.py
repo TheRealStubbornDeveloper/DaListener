@@ -36,6 +36,8 @@ class SessionStore:
                 end_ms INTEGER NOT NULL,
                 revision INTEGER NOT NULL,
                 stability TEXT NOT NULL,
+                detected_language TEXT,
+                language_probability REAL,
                 PRIMARY KEY (session_id, source_id, utterance_id),
                 FOREIGN KEY (session_id) REFERENCES sessions(id)
             );
@@ -47,11 +49,19 @@ class SessionStore:
                 FOREIGN KEY (session_id) REFERENCES sessions(id)
             );
         """)
+        columns = {
+            row["name"] for row in self.connection.execute("PRAGMA table_info(transcript_events)")
+        }
+        if "detected_language" not in columns:
+            self.connection.execute("ALTER TABLE transcript_events ADD COLUMN detected_language TEXT")
+        if "language_probability" not in columns:
+            self.connection.execute("ALTER TABLE transcript_events ADD COLUMN language_probability REAL")
         self.connection.commit()
 
     def start_session(self, session_id: str, selection: CaptureSelection, model_name: str) -> None:
         selection_dict = asdict(selection)
         selection_dict["mode"] = selection.mode.value
+        selection_dict["language"] = selection.language.value
         with self.lock:
             self.connection.execute(
                 "INSERT INTO sessions(id, started_at, capture_selection, model_name) VALUES (?, ?, ?, ?)",
@@ -87,14 +97,18 @@ class SessionStore:
                 return False
             self.connection.execute("""
                 INSERT INTO transcript_events(
-                    session_id, source_id, utterance_id, text, start_ms, end_ms, revision, stability
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    session_id, source_id, utterance_id, text, start_ms, end_ms, revision, stability,
+                    detected_language, language_probability
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(session_id, source_id, utterance_id) DO UPDATE SET
                     text=excluded.text, start_ms=excluded.start_ms, end_ms=excluded.end_ms,
-                    revision=excluded.revision, stability=excluded.stability
+                    revision=excluded.revision, stability=excluded.stability,
+                    detected_language=excluded.detected_language,
+                    language_probability=excluded.language_probability
             """, (
                 event.session_id, event.source_id.value, event.utterance_id, event.text,
                 event.start_ms, event.end_ms, event.revision, event.stability.value,
+                event.detected_language, event.language_probability,
             ))
             self.connection.commit()
             return True

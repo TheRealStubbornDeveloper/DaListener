@@ -13,7 +13,7 @@ def test_failed_capture_start_aborts_empty_session(tmp_path: Path, monkeypatch):
         store, tmp_path / "models", "efficient", "model",
         lambda _event: None, lambda _source, _text: None,
     )
-    monkeypatch.setattr(controller.engine, "start", lambda _session, _sources: None)
+    monkeypatch.setattr(controller.engine, "start", lambda _session, _sources, _language: None)
     monkeypatch.setattr(controller.engine, "stop", lambda: None)
     monkeypatch.setattr(
         controller.capture, "start",

@@ -52,7 +52,7 @@ class SessionController:
         self.started_at = time.monotonic()
         self.paused = False
         try:
-            self.engine.start(session_id, sources)
+            self.engine.start(session_id, sources, selection.language)
             self.capture.start(selection, self._on_frame, self._on_status)
         except Exception:
             self.capture.stop()

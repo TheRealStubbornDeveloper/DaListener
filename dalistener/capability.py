@@ -18,8 +18,8 @@ import psutil
 from .models import CapabilityReport, PerformanceRating, QualityMode
 
 
-APP_VERSION = "0.2.0a3"
-MODEL_VERSION = "moonshine-streaming-2026-dual-lane-calibration-v3"
+APP_VERSION = "0.2.0a4"
+MODEL_VERSION = "moonshine-whisper-en-tl-auto-2026-v1"
 _CUDA_DLL_DIR_HANDLES: list[object] = []
 _CUDA_REGISTERED_DIRS: set[str] = set()
 
@@ -184,18 +184,18 @@ class CapabilityService:
         if total_ram < 4 or physical < 2:
             quality = QualityMode.EFFICIENT
             rating = PerformanceRating.NOT_RECOMMENDED
-            model = "Moonshine Small Streaming"
+            model = "Moonshine Small Streaming + Whisper tiny multilingual" if finalizer_installed else "Moonshine Small Streaming"
             delay = (2.0, 5.0)
             final = (3.0, 7.0)
-            estimated_memory = 700
+            estimated_memory = 1050 if finalizer_installed else 700
             reasons.append("Less than 4 GB RAM or fewer than 2 physical CPU cores")
         elif total_ram < 8 or physical < 4:
             quality = QualityMode.EFFICIENT
             rating = PerformanceRating.DELAYED
-            model = "Moonshine Small Streaming"
+            model = "Moonshine Small Streaming + Whisper tiny multilingual" if finalizer_installed else "Moonshine Small Streaming"
             delay = (1.5, 3.5)
             final = (2.0, 5.0)
-            estimated_memory = 700
+            estimated_memory = 1050 if finalizer_installed else 700
             reasons.append("Balanced mode needs at least 8 GB RAM and 4 physical CPU cores")
         elif nvidia_refinement:
             quality = QualityMode.BEST
@@ -207,10 +207,10 @@ class CapabilityService:
         else:
             quality = QualityMode.BALANCED
             rating = PerformanceRating.LIVEISH if physical < 6 else PerformanceRating.FAST
-            model = "Moonshine Medium Streaming"
+            model = "Moonshine Medium Streaming + Whisper small multilingual" if finalizer_installed else "Moonshine Medium Streaming"
             delay = (0.5, 2.0) if physical < 6 else (0.3, 1.0)
-            final = (1.0, 2.5) if physical < 6 else (0.5, 1.8)
-            estimated_memory = 1100
+            final = (1.5, 4.0) if finalizer_installed else ((1.0, 2.5) if physical < 6 else (0.5, 1.8))
+            estimated_memory = 1900 if finalizer_installed else 1100
             if gpu_name and "nvidia" in gpu_name.lower() and (gpu_vram or 0) < 4:
                 reasons.append("NVIDIA GPU has less than 4 GB VRAM; GPU finalization disabled")
             elif gpu_name and "nvidia" in gpu_name.lower() and (gpu_vram or 0) >= 4 and not finalizer_installed:

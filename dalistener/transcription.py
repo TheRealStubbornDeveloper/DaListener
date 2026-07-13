@@ -5,6 +5,7 @@ import time
 import uuid
 import os
 import sys
+from dataclasses import dataclass
 from concurrent.futures import Future, ThreadPoolExecutor, wait
 from collections import defaultdict
 from collections.abc import Callable
@@ -12,12 +13,19 @@ from pathlib import Path
 
 import numpy as np
 
-from .models import AudioFrame, SourceKind, Stability, TranscriptEvent
+from .models import AudioFrame, SourceKind, Stability, TranscriptEvent, TranscriptionLanguage
 
 
 TranscriptCallback = Callable[[TranscriptEvent], None]
 ProgressCallback = Callable[[str], None]
 _DLL_DIR_HANDLES: list[object] = []
+
+
+@dataclass(frozen=True, slots=True)
+class FinalizationResult:
+    text: str
+    language: str
+    probability: float
 
 
 def _register_windows_runtime_dirs() -> None:
@@ -60,6 +68,19 @@ class MoonshineEngine:
         self.finalizer_error: str | None = None
         self.finalizer_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="whisper-finalizer")
         self.pending_finalizers: dict[Future, TranscriptEvent] = {}
+        self.language = TranscriptionLanguage.AUTO
+        if quality == "best":
+            self.finalizer_model_name = "large-v3-turbo"
+            self.finalizer_device = "cuda"
+            self.finalizer_compute_type = "int8_float16"
+        elif quality == "balanced":
+            self.finalizer_model_name = "small"
+            self.finalizer_device = "cpu"
+            self.finalizer_compute_type = "int8"
+        else:
+            self.finalizer_model_name = "tiny"
+            self.finalizer_device = "cpu"
+            self.finalizer_compute_type = "int8"
 
     @staticmethod
     def _imports():
@@ -88,25 +109,36 @@ class MoonshineEngine:
             options={"transcription_interval": "0.5", "vad_max_segment_duration": "15"},
         )
         progress("Moonshine: streaming model loaded successfully.")
-        if self.quality == "best":
-            try:
-                progress("Whisper Turbo: checking the Hugging Face cache and CUDA runtime…")
-                self.finalizer = WhisperFinalizer(progress)
-                self.finalizer_error = None
-                progress("Whisper Turbo: GPU finalizer loaded successfully.")
-            except (ImportError, RuntimeError) as exc:
-                self.finalizer = None
-                self.finalizer_error = str(exc)
-                progress(f"Whisper Turbo unavailable; continuing with Moonshine: {exc}")
+        try:
+            label = "Whisper Turbo" if self.quality == "best" else "Multilingual Whisper"
+            progress(f"{label}: checking the model cache and {self.finalizer_device.upper()} runtime…")
+            self.finalizer = WhisperFinalizer(
+                self.finalizer_model_name,
+                self.finalizer_device,
+                self.finalizer_compute_type,
+                progress,
+            )
+            self.finalizer_error = None
+            progress(f"{label}: finalizer loaded successfully.")
+        except (ImportError, RuntimeError) as exc:
+            self.finalizer = None
+            self.finalizer_error = str(exc)
+            progress(f"Multilingual finalizer unavailable; English Moonshine only: {exc}")
         return str(model_path), model_arch
 
-    def start(self, session_id: str, sources: list[SourceKind]) -> None:
+    def start(
+        self,
+        session_id: str,
+        sources: list[SourceKind],
+        language: TranscriptionLanguage = TranscriptionLanguage.AUTO,
+    ) -> None:
         if self.transcriber is None:
             self.prepare()
         _, ListenerBase, _, _ = self._imports()
         self.session_id = session_id
         self.started_at_ms = time.monotonic_ns() // 1_000_000
         self.revisions.clear()
+        self.language = language
 
         engine = self
 
@@ -173,8 +205,13 @@ class MoonshineEngine:
             self.pending_finalizers.pop(future, None)
 
     def _finalize(self, draft: TranscriptEvent, audio: np.ndarray) -> None:
+        detected_language = None
+        language_probability = None
         try:
-            text = self.finalizer.finalize(audio)
+            result = self.finalizer.finalize(audio, self.language)
+            text = result.text
+            detected_language = result.language
+            language_probability = result.probability
         except Exception:
             text = draft.text
         self.callback(TranscriptEvent(
@@ -182,6 +219,8 @@ class MoonshineEngine:
             utterance_id=draft.utterance_id, text=text or draft.text,
             start_ms=draft.start_ms, end_ms=draft.end_ms,
             revision=draft.revision + 1, stability=Stability.FINAL,
+            detected_language=detected_language,
+            language_probability=language_probability,
         ))
 
     def accept(self, frame: AudioFrame) -> None:
@@ -246,20 +285,54 @@ class MoonshineEngine:
 
 
 class WhisperFinalizer:
-    def __init__(self, progress_callback: ProgressCallback | None = None):
+    def __init__(
+        self,
+        model_name: str = "large-v3-turbo",
+        device: str = "cuda",
+        compute_type: str = "int8_float16",
+        progress_callback: ProgressCallback | None = None,
+    ):
         progress = progress_callback or (lambda _message: None)
-        from .capability import _cuda_runtime_ready
-        if not _cuda_runtime_ready():
-            raise RuntimeError("Best mode requires CUDA 12 cuBLAS and cuDNN 9")
+        if device == "cuda":
+            from .capability import _cuda_runtime_ready
+            if not _cuda_runtime_ready():
+                raise RuntimeError("Best mode requires CUDA 12 cuBLAS and cuDNN 9")
         from faster_whisper import WhisperModel
         try:
-            progress("Whisper Turbo: downloading missing files or loading the cached model…")
-            self.model = WhisperModel("large-v3-turbo", device="cuda", compute_type="int8_float16")
+            progress(f"Whisper {model_name}: downloading missing files or loading the cached model…")
+            self.model = WhisperModel(model_name, device=device, compute_type=compute_type)
         except Exception as exc:
-            raise RuntimeError(f"Whisper GPU finalizer unavailable: {exc}") from exc
+            raise RuntimeError(f"Whisper multilingual finalizer unavailable: {exc}") from exc
 
-    def finalize(self, audio: np.ndarray) -> str:
-        segments, _ = self.model.transcribe(
-            audio, language="en", beam_size=1, vad_filter=False, condition_on_previous_text=False,
+    def finalize(
+        self,
+        audio: np.ndarray,
+        language_mode: TranscriptionLanguage = TranscriptionLanguage.AUTO,
+    ) -> FinalizationResult:
+        if language_mode == TranscriptionLanguage.AUTO:
+            detected, detected_probability, probabilities = self.model.detect_language(
+                audio=audio,
+                vad_filter=False,
+                language_detection_segments=2,
+            )
+            allowed = {code: probability for code, probability in (probabilities or []) if code in ("en", "tl")}
+            language = max(allowed, key=allowed.get) if allowed else detected if detected in ("en", "tl") else "en"
+            probability = float(allowed.get(language, detected_probability if language == detected else 0.0))
+        else:
+            language = language_mode.value
+            probability = 1.0
+
+        segments, info = self.model.transcribe(
+            audio,
+            language=language,
+            task="transcribe",
+            beam_size=1,
+            vad_filter=False,
+            condition_on_previous_text=False,
         )
-        return " ".join(segment.text.strip() for segment in segments).strip()
+        text = " ".join(segment.text.strip() for segment in segments).strip()
+        return FinalizationResult(
+            text=text,
+            language=str(getattr(info, "language", language) or language),
+            probability=probability,
+        )

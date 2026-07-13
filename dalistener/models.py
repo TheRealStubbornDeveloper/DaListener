@@ -35,6 +35,12 @@ class PerformanceRating(StrEnum):
     NOT_RECOMMENDED = "not-recommended"
 
 
+class TranscriptionLanguage(StrEnum):
+    AUTO = "auto"
+    ENGLISH = "en"
+    TAGALOG = "tl"
+
+
 @dataclass(slots=True)
 class CaptureSelection:
     mode: CaptureMode = CaptureMode.BOTH
@@ -42,6 +48,7 @@ class CaptureSelection:
     output_id: str | None = None
     follow_default_microphone: bool = True
     follow_default_output: bool = True
+    language: TranscriptionLanguage = TranscriptionLanguage.AUTO
 
 
 @dataclass(slots=True)
@@ -64,6 +71,8 @@ class TranscriptEvent:
     end_ms: int
     revision: int
     stability: Stability
+    detected_language: str | None = None
+    language_probability: float | None = None
 
 
 @dataclass(slots=True)

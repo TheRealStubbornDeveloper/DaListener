@@ -30,6 +30,9 @@ def test_all_export_formats(tmp_path: Path):
         exporter.export("session", path)
         assert path.exists()
         assert "Hello world" in path.read_text(encoding="utf-8")
+    assert (tmp_path / "transcript.txt").read_text(encoding="utf-8") == (
+        "[00:00:01.000] Me: Hello world"
+    )
 
 
 def test_export_preserves_latest_draft_after_interruption(tmp_path: Path):
@@ -39,3 +42,15 @@ def test_export_preserves_latest_draft_after_interruption(tmp_path: Path):
     path = tmp_path / "transcript.txt"
     TranscriptExporter(store).export("session", path)
     assert "unfinished but valuable" in path.read_text(encoding="utf-8")
+
+
+def test_detected_language_metadata_is_persisted(tmp_path: Path):
+    store = SessionStore(tmp_path / "sessions.db")
+    store.start_session("session", CaptureSelection(), "model")
+    detected = event("Kumusta!", 1, Stability.FINAL)
+    detected.detected_language = "tl"
+    detected.language_probability = 0.94
+    assert store.save_event(detected)
+    row = store.events("session")[0]
+    assert row["detected_language"] == "tl"
+    assert row["language_probability"] == 0.94
