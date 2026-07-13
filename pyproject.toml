@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dalistener"
-version = "0.2.0a1"
+version = "0.2.0a2"
 description = "Local, Windows-first live transcription for microphone and system audio"
 requires-python = ">=3.11"
 dependencies = [

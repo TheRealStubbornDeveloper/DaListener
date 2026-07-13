@@ -35,8 +35,8 @@ class SessionController:
         self.paused = False
         self._last_level_at: dict[SourceKind, float] = {}
 
-    def prepare(self) -> tuple[str, object]:
-        return self.engine.prepare()
+    def prepare(self, progress_callback: Callable[[str], None] | None = None) -> tuple[str, object]:
+        return self.engine.prepare(progress_callback)
 
     def start(self, selection: CaptureSelection) -> str:
         if self.session_id:

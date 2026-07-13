@@ -5,7 +5,7 @@
 [![Windows](https://img.shields.io/badge/Windows-11%20%7C%2010-2f81f7?logo=windows)](https://www.microsoft.com/windows)
 [![Python](https://img.shields.io/badge/Python-3.11%2B-3776ab?logo=python&logoColor=white)](https://www.python.org/)
 [![Local processing](https://img.shields.io/badge/processing-local-3fb950)](#privacy)
-[![Version](https://img.shields.io/badge/version-0.2.0--alpha.1-d29922)](https://github.com/TheRealStubbornDeveloper/DaListener)
+[![Version](https://img.shields.io/badge/version-0.2.0--alpha.2-d29922)](https://github.com/TheRealStubbornDeveloper/DaListener)
 
 DaListener captures a microphone, Windows system audio, or both at once and turns them into separate, searchable transcript lanes. Speech recognition runs locally; raw audio is discarded by default.
 
@@ -75,12 +75,12 @@ The first launch downloads the recommended English model and runs a local dual-l
 
 ### Download the test build
 
-Download [`DaListener-0.2.0-alpha.1-windows-x64.zip`](https://github.com/TheRealStubbornDeveloper/DaListener/releases/tag/v0.2.0-alpha.1), choose **Extract All**, and run `DaListener.exe`. Do not run it inside the ZIP. The first launch needs internet access to download the selected speech model; transcription is local afterward.
+Download [`DaListener-0.2.0-alpha.2-windows-x64.zip`](https://github.com/TheRealStubbornDeveloper/DaListener/releases/tag/v0.2.0-alpha.2), choose **Extract All**, and run `DaListener.exe`. Do not run it inside the ZIP. The first launch needs internet access to download the selected speech model; transcription is local afterward.
 
 This is an unsigned test build, so Windows SmartScreen may show an unknown-publisher warning. Verify that the ZIP came from this repository and that its SHA-256 is:
 
 ```text
-8b1504756951fdcc31f0fa381e81049469f65dc96f7f05ddbe0a4ef43dd3fc98
+1c20109672d2737f5105329a6ab7e8dc378850c526b47ff38b42ab5dd0174829
 ```
 
 The archive includes CPU transcription and the optional Whisper engine, but not the roughly 1.3 GB NVIDIA compatibility runtime. It uses Best mode when CUDA 12 cuBLAS and cuDNN 9 DLLs are available globally; otherwise it transparently uses Balanced CPU mode.

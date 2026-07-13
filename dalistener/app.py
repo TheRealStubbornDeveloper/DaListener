@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -24,12 +25,58 @@ from .session import SessionController
 from .storage import SessionStore, TranscriptExporter
 
 
+class WindowedTextStream:
+    """A tqdm-compatible stream for pythonw, optionally forwarded to the UI."""
+
+    encoding = "utf-8"
+    ansi_pattern = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+
+    def __init__(self, callback=None):
+        self.callback = callback
+        self.last_message = ""
+        self.last_emitted_at = 0.0
+
+    def write(self, value) -> int:
+        text = str(value or "")
+        if self.callback:
+            clean = self.ansi_pattern.sub("", text).replace("\r", "\n")
+            messages = [line.strip() for line in clean.splitlines() if line.strip()]
+            if messages:
+                message = messages[-1]
+                now = time.monotonic()
+                if message != self.last_message and now - self.last_emitted_at >= 0.2:
+                    self.callback(message)
+                    self.last_message = message
+                    self.last_emitted_at = now
+        return len(text)
+
+    def flush(self) -> None:
+        return None
+
+    def isatty(self) -> bool:
+        return False
+
+    def writable(self) -> bool:
+        return True
+
+
+# pythonw.exe deliberately starts without console streams. Some third-party
+# downloaders assume stderr always has write(), so provide a safe stream before
+# they are imported. The preparation worker replaces it with a UI-forwarding
+# instance once the window is ready.
+if sys.stderr is None:
+    sys.stderr = WindowedTextStream()
+if sys.stdout is None:
+    sys.stdout = WindowedTextStream()
+
+
 class UiBridge(QObject):
     transcript = Signal(object)
     status = Signal(str, str)
     level = Signal(str, float)
     model_ready = Signal(object)
     model_error = Signal(str)
+    model_log = Signal(str)
 
 
 class DaListenerWindow(QMainWindow):
@@ -62,6 +109,7 @@ class DaListenerWindow(QMainWindow):
         self.bridge.level.connect(self._on_level)
         self.bridge.model_ready.connect(self._on_model_ready)
         self.bridge.model_error.connect(self._on_model_error)
+        self.bridge.model_log.connect(self._append_model_log)
         self.controller = SessionController(
             self.store, self.data_dir / "models", self.report.quality_mode.value,
             self.report.model_name, self.bridge.transcript.emit,
@@ -188,6 +236,17 @@ class DaListenerWindow(QMainWindow):
         controls.addWidget(self.status_label)
         root.addLayout(controls)
 
+        model_log_card = self._card()
+        model_log_layout = QVBoxLayout(model_log_card)
+        model_log_layout.setContentsMargins(10, 8, 10, 8)
+        model_log_layout.addWidget(self._eyebrow("MODEL PREPARATION LOG"))
+        self.model_log = QTextEdit()
+        self.model_log.setReadOnly(True)
+        self.model_log.setMaximumHeight(118)
+        self.model_log.setPlaceholderText("Download and initialization details will appear here.")
+        model_log_layout.addWidget(self.model_log)
+        root.addWidget(model_log_card)
+
         tabs = QTabWidget()
         live_tab = QWidget()
         history_tab = QWidget()
@@ -286,11 +345,28 @@ class DaListenerWindow(QMainWindow):
     def _prepare_model_async(self) -> None:
         self.start_button.setText("Preparing model…")
         self.start_button.setEnabled(False)
+        self.model_log.clear()
+        self.bridge.model_log.emit("Starting local model preparation.")
 
         def prepare() -> None:
+            monitor_stop = threading.Event()
             try:
-                self.bridge.status.emit(SourceKind.STATUS.value, "Downloading or loading the recommended local model…")
-                self.controller.prepare()
+                def log(message: str) -> None:
+                    self.bridge.model_log.emit(message)
+                    self.bridge.status.emit(SourceKind.STATUS.value, message)
+
+                # Keep this installed after preparation: restoring pythonw's
+                # original None stream would break later tqdm/log writes.
+                sys.stderr = WindowedTextStream(log)
+                log("Inspecting the selected quality mode and local model cache…")
+                monitor = threading.Thread(
+                    target=self._monitor_model_preparation,
+                    args=(monitor_stop, log),
+                    name="model-progress-monitor",
+                    daemon=True,
+                )
+                monitor.start()
+                self.controller.prepare(log)
                 report = self.report
                 if report.gpu_refinement and self.controller.engine.finalizer is None:
                     reason = self.controller.engine.finalizer_error or "GPU refinement could not be initialized"
@@ -304,13 +380,57 @@ class DaListenerWindow(QMainWindow):
                     )
                     self.controller.model_name = report.model_name
                 if not report.verified:
-                    self.bridge.status.emit(SourceKind.STATUS.value, "Calibrating transcription performance…")
+                    log("Calibration: running five seconds of real speech through two lanes…")
                     report = self.capability_service.verify(report, self.controller.engine.calibrate)
+                    log(f"Calibration complete: real-time factor {report.real_time_factor:g}.")
+                else:
+                    log("Calibration: reusing the verified hardware/model result from cache.")
+                log("Model preparation complete. DaListener is ready.")
                 self.bridge.model_ready.emit(report)
             except Exception as exc:
                 self.bridge.model_error.emit(str(exc))
+            finally:
+                monitor_stop.set()
 
         threading.Thread(target=prepare, name="model-prepare", daemon=True).start()
+
+    def _monitor_model_preparation(self, stop_event: threading.Event, log) -> None:
+        """Report genuine cache growth and a heartbeat during long native loads."""
+        roots = [self.controller.engine.model_dir]
+        hf_home = Path(os.environ.get("HF_HOME", Path.home() / ".cache" / "huggingface"))
+        roots.append(hf_home / "hub" / "models--mobiuslabsgmbh--faster-whisper-large-v3-turbo")
+        baseline: dict[Path, int] = {}
+        started = time.monotonic()
+
+        def sizes() -> dict[Path, int]:
+            result: dict[Path, int] = {}
+            for root in roots:
+                if not root.exists():
+                    continue
+                try:
+                    for path in root.rglob("*"):
+                        if path.is_file():
+                            result[path] = path.stat().st_size
+                except OSError:
+                    continue
+            return result
+
+        baseline = sizes()
+        while not stop_event.wait(2.0):
+            current = sizes()
+            active = [
+                (path, size) for path, size in current.items()
+                if path.suffix in (".partial", ".incomplete")
+            ]
+            downloaded = sum(max(0, size - baseline.get(path, 0)) for path, size in current.items())
+            elapsed = int(time.monotonic() - started)
+            if active:
+                name, size = max(active, key=lambda item: item[1])
+                log(f"Downloading {name.name}: {size / 1024**2:.1f} MB received ({elapsed}s elapsed)…")
+            elif downloaded > 0:
+                log(f"Model files received this run: {downloaded / 1024**2:.1f} MB ({elapsed}s elapsed)…")
+            else:
+                log(f"Still preparing the local model ({elapsed}s elapsed)…")
 
     def _show_capability(self) -> None:
         report = self.report
@@ -485,6 +605,7 @@ class DaListenerWindow(QMainWindow):
         self.status_label.setText("Local model ready")
 
     def _on_model_error(self, message: str) -> None:
+        self._append_model_log(f"ERROR: {message}")
         self.start_button.setText("Retry model")
         self.start_button.setEnabled(True)
         try:
@@ -494,6 +615,11 @@ class DaListenerWindow(QMainWindow):
         self.start_button.clicked.connect(self._prepare_model_async)
         self.status_label.setText("Model preparation failed")
         QMessageBox.critical(self, "Local model unavailable", message)
+
+    def _append_model_log(self, message: str) -> None:
+        timestamp = time.strftime("%H:%M:%S")
+        self.model_log.append(f"[{timestamp}] {message}")
+        self.model_log.moveCursor(QTextCursor.End)
 
     def _render_lane(self, source: SourceKind) -> None:
         widget = self.mic_text if source == SourceKind.MICROPHONE else self.system_text

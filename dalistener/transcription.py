@@ -16,6 +16,7 @@ from .models import AudioFrame, SourceKind, Stability, TranscriptEvent
 
 
 TranscriptCallback = Callable[[TranscriptEvent], None]
+ProgressCallback = Callable[[str], None]
 _DLL_DIR_HANDLES: list[object] = []
 
 
@@ -67,7 +68,8 @@ class MoonshineEngine:
         from moonshine_voice.transcriber import TranscriptEventListener
         return Transcriber, TranscriptEventListener, get_model_for_language, ModelArch
 
-    def prepare(self) -> tuple[str, object]:
+    def prepare(self, progress_callback: ProgressCallback | None = None) -> tuple[str, object]:
+        progress = progress_callback or (lambda _message: None)
         Transcriber, _, get_model_for_language, ModelArch = self._imports()
         self.model_dir.mkdir(parents=True, exist_ok=True)
         wanted_arch = (
@@ -75,20 +77,27 @@ class MoonshineEngine:
             if self.quality in ("balanced", "best")
             else ModelArch.SMALL_STREAMING
         )
+        progress("Moonshine: checking local model files and download cache…")
         model_path, model_arch = get_model_for_language(
             "en", wanted_arch, cache_root=self.model_dir,
         )
+        progress(f"Moonshine: model files ready at {model_path}")
+        progress("Moonshine: initializing the ONNX Runtime streaming engine…")
         self.transcriber = Transcriber(
             model_path=str(model_path), model_arch=model_arch, update_interval=0.5,
             options={"transcription_interval": "0.5", "vad_max_segment_duration": "15"},
         )
+        progress("Moonshine: streaming model loaded successfully.")
         if self.quality == "best":
             try:
-                self.finalizer = WhisperFinalizer()
+                progress("Whisper Turbo: checking the Hugging Face cache and CUDA runtime…")
+                self.finalizer = WhisperFinalizer(progress)
                 self.finalizer_error = None
+                progress("Whisper Turbo: GPU finalizer loaded successfully.")
             except (ImportError, RuntimeError) as exc:
                 self.finalizer = None
                 self.finalizer_error = str(exc)
+                progress(f"Whisper Turbo unavailable; continuing with Moonshine: {exc}")
         return str(model_path), model_arch
 
     def start(self, session_id: str, sources: list[SourceKind]) -> None:
@@ -237,12 +246,14 @@ class MoonshineEngine:
 
 
 class WhisperFinalizer:
-    def __init__(self):
+    def __init__(self, progress_callback: ProgressCallback | None = None):
+        progress = progress_callback or (lambda _message: None)
         from .capability import _cuda_runtime_ready
         if not _cuda_runtime_ready():
             raise RuntimeError("Best mode requires CUDA 12 cuBLAS and cuDNN 9")
         from faster_whisper import WhisperModel
         try:
+            progress("Whisper Turbo: downloading missing files or loading the cached model…")
             self.model = WhisperModel("large-v3-turbo", device="cuda", compute_type="int8_float16")
         except Exception as exc:
             raise RuntimeError(f"Whisper GPU finalizer unavailable: {exc}") from exc
