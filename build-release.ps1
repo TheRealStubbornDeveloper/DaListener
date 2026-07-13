@@ -11,7 +11,7 @@ if ($LASTEXITCODE -ne 0) { throw "Build dependencies could not be installed." }
 & ".venv\Scripts\pyinstaller.exe" --noconfirm --clean "packaging\dalistener.spec"
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller build failed." }
 
-$Archive = Join-Path $Root "dist\DaListener-0.2.0-alpha.2-windows-x64.zip"
+$Archive = Join-Path $Root "dist\DaListener-0.2.0-alpha.3-windows-x64.zip"
 if (Test-Path $Archive) { Remove-Item -LiteralPath $Archive }
 Compress-Archive -Path "dist\DaListener\*" -DestinationPath $Archive -CompressionLevel Optimal
 Write-Host "Created $Archive"

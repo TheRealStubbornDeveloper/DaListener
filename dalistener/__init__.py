@@ -1,3 +1,3 @@
 """DaListener local transcription application."""
 
-__version__ = "0.2.0a2"
+__version__ = "0.2.0a3"

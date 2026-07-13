@@ -18,7 +18,7 @@ import psutil
 from .models import CapabilityReport, PerformanceRating, QualityMode
 
 
-APP_VERSION = "0.2.0a2"
+APP_VERSION = "0.2.0a3"
 MODEL_VERSION = "moonshine-streaming-2026-dual-lane-calibration-v3"
 _CUDA_DLL_DIR_HANDLES: list[object] = []
 _CUDA_REGISTERED_DIRS: set[str] = set()

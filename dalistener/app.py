@@ -10,8 +10,10 @@ from dataclasses import replace
 from pathlib import Path
 
 from platformdirs import user_data_path
-from PySide6.QtCore import QObject, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QCloseEvent, QFont, QFontDatabase, QTextCharFormat, QTextCursor
+from PySide6.QtCore import QObject, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import (
+    QColor, QCloseEvent, QDesktopServices, QFont, QFontDatabase, QTextCharFormat, QTextCursor,
+)
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel,
     QHeaderView, QLineEdit, QMainWindow, QMessageBox, QProgressBar, QPushButton, QSplitter,
@@ -95,6 +97,7 @@ class DaListenerWindow(QMainWindow):
             SourceKind.MICROPHONE: {}, SourceKind.SYSTEM: {},
         }
         self.last_session_id: str | None = None
+        self.last_saved_folder = self.data_dir
         self.started_at = 0.0
         self.test_capture: CaptureManager | None = None
 
@@ -235,6 +238,22 @@ class DaListenerWindow(QMainWindow):
         self.status_label.setObjectName("muted")
         controls.addWidget(self.status_label)
         root.addLayout(controls)
+
+        self.save_notice = self._card()
+        save_notice_layout = QHBoxLayout(self.save_notice)
+        save_notice_layout.setContentsMargins(12, 8, 10, 8)
+        self.save_notice_label = QLabel()
+        self.save_notice_label.setObjectName("muted")
+        self.save_notice_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        save_notice_layout.addWidget(self.save_notice_label, 1)
+        self.open_folder_button = QPushButton("Open folder")
+        self.open_folder_button.clicked.connect(self.open_saved_folder)
+        save_notice_layout.addWidget(self.open_folder_button)
+        dismiss_notice = QPushButton("Dismiss")
+        dismiss_notice.clicked.connect(self.save_notice.hide)
+        save_notice_layout.addWidget(dismiss_notice)
+        self.save_notice.hide()
+        root.addWidget(self.save_notice)
 
         model_log_card = self._card()
         model_log_layout = QVBoxLayout(model_log_card)
@@ -540,7 +559,7 @@ class DaListenerWindow(QMainWindow):
         self.bookmark_button.setEnabled(False)
         self.live_label.setText("● Ready")
         self.live_label.setStyleSheet("color: #8b949e")
-        self.status_label.setText("Transcript saved locally")
+        self._show_save_location(self.store.path, "Transcript saved locally")
         self.mic_level.setValue(0)
         self.system_level.setValue(0)
         self._refresh_history()
@@ -571,7 +590,23 @@ class DaListenerWindow(QMainWindow):
         )
         if path:
             self.exporter.export(session_id, Path(path))
-            self.status_label.setText(f"Exported {Path(path).name}")
+            self._show_save_location(Path(path), f"Exported {Path(path).name}")
+
+    def _show_save_location(self, path: Path, message: str) -> None:
+        resolved = path.resolve()
+        self.last_saved_folder = resolved if resolved.is_dir() else resolved.parent
+        self.save_notice_label.setText(f"{message}: {resolved}")
+        self.save_notice_label.setToolTip(str(resolved))
+        self.status_label.setText(message)
+        self.save_notice.show()
+
+    def open_saved_folder(self) -> None:
+        folder = self.last_saved_folder
+        if not folder.exists():
+            QMessageBox.warning(self, "Folder unavailable", f"The folder no longer exists:\n{folder}")
+            return
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder))):
+            QMessageBox.warning(self, "Could not open folder", str(folder))
 
     def _on_transcript(self, event: TranscriptEvent) -> None:
         visible_session = self.controller.session_id or self.last_session_id
