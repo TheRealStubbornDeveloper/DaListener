@@ -63,7 +63,7 @@ class OpenAIIntelligenceService:
             response = await client.responses.create(
                 model=settings.intelligence_model,
                 input=(
-                    "You are a live meeting copilot. Summarize only facts grounded in the transcript. "
+                    "You are a live transcription copilot. Summarize only facts grounded in the captured transcript. "
                     "Identify decisions and action items, and briefly explain technologies that may be unfamiliar. "
                     "Only suggest a response if Vladimir or Vlad was addressed and the transcript provides enough context; "
                     "otherwise set suggested_response to null and suggestion_confident to false.\n\nTRANSCRIPT:\n" + transcript

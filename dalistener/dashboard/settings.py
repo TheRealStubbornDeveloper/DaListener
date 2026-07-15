@@ -14,7 +14,7 @@ class OpenAISettings:
 
 
 class OpenAISettingsStore:
-    """Keeps the secret in Windows Credential Manager, never in browser storage."""
+    """Keeps the secret in the operating-system keychain, never browser storage."""
 
     SERVICE = "DaListener/OpenAI"
     USERNAME = "api-key"

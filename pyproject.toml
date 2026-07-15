@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dalistener"
-version = "0.3.0a1"
+version = "0.3.0a2"
 description = "OpenAI-powered multi-meeting transcription dashboard for Chromium tabs"
 requires-python = ">=3.11"
 dependencies = [

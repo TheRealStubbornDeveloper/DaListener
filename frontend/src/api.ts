@@ -1,4 +1,4 @@
-import type { Bootstrap, DashboardEvent, TranscriptEvent } from "./types";
+import type { Bootstrap, CaptureWarningPreferences, DashboardEvent, TranscriptEvent } from "./types";
 
 async function json<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -14,10 +14,14 @@ export const api = {
   bootstrap: () => json<Bootstrap>("/api/v1/bootstrap"),
   transcript: (meetingId: string) => json<TranscriptEvent[]>(`/api/v1/meetings/${meetingId}/transcript`),
   stop: (meetingId: string) => json<{ ok: boolean }>(`/api/v1/meetings/${meetingId}/stop`, { method: "POST" }),
-  pairExtension: () => json<{ audio_url: string; token: string }>("/api/v1/extension/pairing", { method: "POST" }),
+  pairExtension: () => json<{ audio_url: string; api_url: string; token: string }>("/api/v1/extension/pairing", { method: "POST" }),
   saveOpenAIKey: (apiKey: string) => json("/api/v1/settings/openai", { method: "PUT", body: JSON.stringify({ api_key: apiKey }) }),
-  openTranscriptFolder: () => json("/api/v1/transcripts/open-folder", { method: "POST" })
-  ,ask: (meetingId: string, question: string) => json<{ answer: string }>(`/api/v1/meetings/${meetingId}/ask`, { method: "POST", body: JSON.stringify({ question }) })
+  openTranscriptFolder: () => json("/api/v1/transcripts/open-folder", { method: "POST" }),
+  openExtensionFolder: () => json<{ ok: boolean; path: string }>("/api/v1/extension/open-folder", { method: "POST" }),
+  captureWarnings: () => json<CaptureWarningPreferences>("/api/v1/settings/capture-warnings"),
+  removeCaptureWarning: (domain: string) => json<CaptureWarningPreferences>(`/api/v1/settings/capture-warnings/${encodeURIComponent(domain)}`, { method: "DELETE" }),
+  resetCaptureWarnings: () => json<CaptureWarningPreferences>("/api/v1/settings/capture-warnings", { method: "DELETE" }),
+  ask: (meetingId: string, question: string) => json<{ answer: string }>(`/api/v1/meetings/${meetingId}/ask`, { method: "POST", body: JSON.stringify({ question }) })
 };
 
 export function connectEvents(since: number, onEvent: (event: DashboardEvent) => void, onState: (state: string) => void) {

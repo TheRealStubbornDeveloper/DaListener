@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
@@ -17,10 +18,21 @@ import uvicorn
 from platformdirs import user_data_path
 from pydantic import BaseModel, Field
 
-from .contracts import BootstrapResponse, ExtensionAck, ExtensionHello
+from .contracts import (
+    BootstrapResponse,
+    CapturePreflightRequest,
+    CapturePreflightResponse,
+    CaptureWarningAcknowledgement,
+    CaptureWarningPreferences,
+    ExtensionAck,
+    ExtensionHello,
+)
 from .events import EventHub
 from .meetings import BrowserMeetingManager
+from .platform import open_folder, synchronize_browser_extension
+from .preferences import CapturePreferenceStore
 from .settings import OpenAISettingsStore
+from .sources import CaptureCategory, classify_source, warning_message
 
 
 class OpenAIKeyUpdate(BaseModel):
@@ -39,6 +51,8 @@ class DashboardContext:
         self.session_token = secrets.token_urlsafe(32)
         self.hub = EventHub()
         self.settings = OpenAISettingsStore()
+        self.capture_preferences = CapturePreferenceStore(data_dir / "preferences.json")
+        self.extension_dir = synchronize_browser_extension(data_dir / "BrowserExtension")
         self.meetings = BrowserMeetingManager(data_dir, self.hub, self.settings)
         self.port = 0
 
@@ -64,6 +78,13 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         )
 
     app = FastAPI(title="DaListener Dashboard API", version="1.0.0", lifespan=lifespan)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origin_regex=r"^chrome-extension://[a-p]{32}$",
+        allow_credentials=False,
+        allow_methods=["POST", "OPTIONS"],
+        allow_headers=["Content-Type", "X-DaListener-Extension-Token"],
+    )
     app.state.context = context
 
     def require_session(
@@ -72,6 +93,10 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     ) -> None:
         if not secrets.compare_digest(dalistener_session or x_dalistener_token or "", context.session_token):
             raise HTTPException(status_code=401, detail="Dashboard session required")
+
+    def require_extension(x_dalistener_extension_token: str | None = Header(default=None)) -> None:
+        if not secrets.compare_digest(x_dalistener_extension_token or "", context.extension_token):
+            raise HTTPException(status_code=401, detail="Pair the extension from the DaListener dashboard")
 
     @app.get("/auth/exchange", include_in_schema=False)
     async def exchange(token: str = Query(...)):
@@ -102,8 +127,41 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         scheme = "wss" if request.url.scheme == "https" else "ws"
         return {
             "audio_url": f"{scheme}://{request.url.netloc}/api/v1/extension/audio",
+            "api_url": f"{request.url.scheme}://{request.url.netloc}",
             "token": context.extension_token,
         }
+
+    @app.post(
+        "/api/v1/extension/capture-preflight",
+        response_model=CapturePreflightResponse,
+        dependencies=[Depends(require_extension)],
+    )
+    async def capture_preflight(preflight: CapturePreflightRequest):
+        source = classify_source(preflight.url)
+        needs_warning = (
+            source.supported
+            and source.category != CaptureCategory.MEETING
+            and not context.capture_preferences.is_suppressed(source.domain)
+        )
+        return CapturePreflightResponse(
+            supported=source.supported,
+            category=source.category,
+            domain=source.domain,
+            service_label=source.service_label,
+            warning_required=needs_warning,
+            warning_message=warning_message(source) if needs_warning else None,
+        )
+
+    @app.post(
+        "/api/v1/extension/capture-warning/acknowledge",
+        response_model=CaptureWarningPreferences,
+        dependencies=[Depends(require_extension)],
+    )
+    async def acknowledge_capture_warning(acknowledgement: CaptureWarningAcknowledgement):
+        domains = context.capture_preferences.suppressed_domains()
+        if acknowledgement.suppress_for_domain:
+            domains = context.capture_preferences.suppress(acknowledgement.domain)
+        return CaptureWarningPreferences(suppressed_domains=domains)
 
     @app.get("/api/v1/meetings", dependencies=[Depends(require_session)])
     async def meetings():
@@ -126,12 +184,38 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     @app.post("/api/v1/transcripts/open-folder", dependencies=[Depends(require_session)])
     async def open_transcript_folder():
         path = context.data_dir / "Transcripts"
-        path.mkdir(parents=True, exist_ok=True)
-        if sys.platform == "win32":
-            os.startfile(path)  # type: ignore[attr-defined]
-        else:
-            raise HTTPException(status_code=501, detail="Open folder is currently implemented for Windows")
+        open_folder(path)
         return {"ok": True, "path": str(path)}
+
+    @app.post("/api/v1/extension/open-folder", dependencies=[Depends(require_session)])
+    async def open_extension_folder():
+        context.extension_dir = synchronize_browser_extension(context.extension_dir)
+        open_folder(context.extension_dir)
+        return {"ok": True, "path": str(context.extension_dir)}
+
+    @app.get(
+        "/api/v1/settings/capture-warnings",
+        response_model=CaptureWarningPreferences,
+        dependencies=[Depends(require_session)],
+    )
+    async def capture_warning_preferences():
+        return CaptureWarningPreferences(suppressed_domains=context.capture_preferences.suppressed_domains())
+
+    @app.delete(
+        "/api/v1/settings/capture-warnings/{domain}",
+        response_model=CaptureWarningPreferences,
+        dependencies=[Depends(require_session)],
+    )
+    async def remove_capture_warning_preference(domain: str):
+        return CaptureWarningPreferences(suppressed_domains=context.capture_preferences.remove(domain))
+
+    @app.delete(
+        "/api/v1/settings/capture-warnings",
+        response_model=CaptureWarningPreferences,
+        dependencies=[Depends(require_session)],
+    )
+    async def reset_capture_warning_preferences():
+        return CaptureWarningPreferences(suppressed_domains=context.capture_preferences.reset())
 
     @app.get("/api/v1/meetings/{meeting_id}/transcript", dependencies=[Depends(require_session)])
     async def transcript(meeting_id: str):
@@ -182,7 +266,7 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
                 await websocket.close(code=4401, reason="Pair the extension from the DaListener dashboard")
                 return
             runtime = await context.meetings.start_browser_meeting(
-                hello.title, hello.tab_id, hello.browser, hello.sample_rate,
+                hello.title, hello.url, hello.tab_id, hello.browser, hello.sample_rate,
             )
             meeting_id = runtime.summary.id
             ack = ExtensionAck(

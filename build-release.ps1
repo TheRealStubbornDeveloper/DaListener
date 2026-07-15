@@ -17,7 +17,7 @@ Pop-Location
 & ".venv\Scripts\pyinstaller.exe" --noconfirm --clean "packaging\dalistener.spec"
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller build failed." }
 
-$Archive = Join-Path $Root "dist\DaListener-0.3.0-alpha.1-windows-x64.zip"
+$Archive = Join-Path $Root "dist\DaListener-0.3.0-alpha.2-windows-x64.zip"
 if (Test-Path $Archive) { Remove-Item -LiteralPath $Archive }
 Compress-Archive -Path "dist\DaListener\*" -DestinationPath $Archive -CompressionLevel Optimal
 Write-Host "Created $Archive"

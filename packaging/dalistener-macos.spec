@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_all, collect_data_files
@@ -33,18 +34,28 @@ exe = EXE(
     [],
     exclude_binaries=True,
     name="DaListener",
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=False,
-    upx=True,
     console=False,
-    disable_windowed_traceback=False,
+    target_arch="universal2",
+    codesign_identity=os.environ.get("APPLE_CODESIGN_IDENTITY"),
 )
-app = COLLECT(
+collection = COLLECT(
     exe,
     analysis.binaries,
     analysis.datas,
     strip=False,
-    upx=True,
+    upx=False,
     name="DaListener",
+)
+app = BUNDLE(
+    collection,
+    name="DaListener.app",
+    bundle_identifier="com.therealstubborndeveloper.dalistener",
+    version="0.3.0a2",
+    info_plist={
+        "CFBundleDisplayName": "DaListener",
+        "CFBundleShortVersionString": "0.3.0-alpha.2",
+        "CFBundleVersion": "0.3.0.2",
+        "LSMinimumSystemVersion": "13.0",
+        "NSHighResolutionCapable": True,
+    },
 )

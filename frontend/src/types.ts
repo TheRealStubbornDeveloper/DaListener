@@ -7,6 +7,9 @@ export interface Meeting {
   status: MeetingStatus;
   transcription_provider: "openai";
   transcription_model: string;
+  capture_category: "meeting" | "media" | "other" | "unsupported";
+  site_domain: string;
+  service_label: string;
   started_at: string;
   ended_at: string | null;
   event_count: number;
@@ -55,4 +58,8 @@ export interface IntelligenceNotes {
   technologies: { name: string; explanation: string }[];
   suggested_response: string | null;
   suggestion_confident: boolean;
+}
+
+export interface CaptureWarningPreferences {
+  suppressed_domains: string[];
 }

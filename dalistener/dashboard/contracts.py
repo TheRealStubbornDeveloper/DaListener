@@ -6,6 +6,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from .sources import CaptureCategory
+
 
 class MeetingStatus(StrEnum):
     PREPARING = "preparing"
@@ -23,6 +25,9 @@ class MeetingSummary(BaseModel):
     status: MeetingStatus
     transcription_provider: str = "openai"
     transcription_model: str = "gpt-realtime-whisper"
+    capture_category: CaptureCategory = CaptureCategory.OTHER
+    site_domain: str = ""
+    service_label: str = "Browser tab"
     started_at: datetime
     ended_at: datetime | None = None
     event_count: int = 0
@@ -80,3 +85,27 @@ class ExtensionAck(BaseModel):
     meeting_id: str
     transcription_provider: str = "openai"
     transcription_model: str
+
+
+class CapturePreflightRequest(BaseModel):
+    tab_id: int
+    title: str = ""
+    url: str
+
+
+class CapturePreflightResponse(BaseModel):
+    supported: bool
+    category: CaptureCategory
+    domain: str
+    service_label: str
+    warning_required: bool
+    warning_message: str | None = None
+
+
+class CaptureWarningAcknowledgement(BaseModel):
+    domain: str
+    suppress_for_domain: bool = False
+
+
+class CaptureWarningPreferences(BaseModel):
+    suppressed_domains: list[str]

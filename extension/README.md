@@ -1,9 +1,11 @@
 # DaListener Chromium extension
 
-1. Open `chrome://extensions` (or `edge://extensions`).
+1. Open `chrome://extensions` or `edge://extensions`.
 2. Enable **Developer mode** and choose **Load unpacked**.
-3. Select this `extension` directory.
-4. Start the DaListener dashboard, copy its pairing data, and paste it into the extension options.
-5. Open each Zoom or other meeting tab and click the DaListener extension icon. `REC` means that tab has its own capture stream. Click again to stop it.
+3. Select this `extension` directory, or the installed `BrowserExtension` folder opened from the DaListener dashboard.
+4. Start DaListener, copy its pairing data, paste it into the extension options, and save.
+5. Open each audio tab and click the DaListener icon. `REC` means that tab has an independent capture stream; click again to stop it.
+
+Known meeting sites start directly. YouTube and other media or unfamiliar sites show a confirmation describing the source and OpenAI processing. Approval can be remembered for that website and removed later under **Capture settings** in the dashboard.
 
 The extension captures tab audio only. It never requests microphone access and never receives the OpenAI API key.

@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Confirm DaListener capture</title>
+  <link rel="stylesheet" href="confirm.css">
+</head>
+<body>
+  <main>
+    <span class="eyebrow">NON-MEETING AUDIO</span>
+    <h1>Capture this tab?</h1>
+    <p id="service" class="service"></p>
+    <p id="warning"></p>
+    <div class="notice"><strong>Audio leaves this computer.</strong> It is streamed to OpenAI for transcription. Raw audio is not saved by DaListener.</div>
+    <label><input id="remember" type="checkbox"> Do not remind me again for this website</label>
+    <p id="error" class="error"></p>
+    <div class="actions"><button id="cancel" class="secondary">Cancel</button><button id="continue">Continue capture</button></div>
+  </main>
+  <script src="confirm.js"></script>
+</body>
+</html>

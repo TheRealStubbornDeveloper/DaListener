@@ -1,0 +1,44 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+      Name="DaListener 0.3.0 alpha 2"
+      Manufacturer="TheRealStubbornDeveloper"
+      Version="0.3.0"
+      UpgradeCode="9FDF40E3-BC48-4D57-9117-C47CED98F96C"
+      Scope="perMachine"
+      Language="1033"
+      InstallerVersion="500">
+
+    <SummaryInformation Description="DaListener OpenAI meeting and media transcription dashboard" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of DaListener is already installed." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="DaListener" />
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="PROGRAMMENUDIR" Name="DaListener" />
+    </StandardDirectory>
+
+    <Component Id="ApplicationShortcut" Directory="PROGRAMMENUDIR" Guid="22324959-2AB2-4A69-8DD0-4CC96DD8303E">
+      <Shortcut
+          Id="StartMenuShortcut"
+          Name="DaListener"
+          Description="Open the DaListener transcription dashboard"
+          Target="[INSTALLFOLDER]DaListener.exe"
+          WorkingDirectory="INSTALLFOLDER" />
+      <RemoveFolder Id="RemoveProgramMenuFolder" On="uninstall" />
+      <RegistryValue
+          Root="HKLM"
+          Key="Software\TheRealStubbornDeveloper\DaListener"
+          Name="Installed"
+          Type="integer"
+          Value="1"
+          KeyPath="yes" />
+    </Component>
+
+    <Feature Id="MainFeature" Title="DaListener" Level="1">
+      <Files Include="!(bindpath.Payload)\**" Directory="INSTALLFOLDER" />
+      <ComponentRef Id="ApplicationShortcut" />
+    </Feature>
+  </Package>
+</Wix>

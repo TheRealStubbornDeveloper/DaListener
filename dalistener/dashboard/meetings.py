@@ -13,6 +13,7 @@ from .events import EventHub
 from .openai_realtime import OpenAIRealtimeTranscriber
 from .settings import OpenAISettingsStore
 from .intelligence import OpenAIIntelligenceService, watched_name
+from .sources import classify_source
 
 
 @dataclass(slots=True)
@@ -49,11 +50,16 @@ class BrowserMeetingManager:
             ),
         )
 
-    async def start_browser_meeting(self, title: str, tab_id: int, browser: str, sample_rate: int) -> BrowserMeetingRuntime:
+    async def start_browser_meeting(
+        self, title: str, url: str, tab_id: int, browser: str, sample_rate: int,
+    ) -> BrowserMeetingRuntime:
         settings = self.settings_store.load()
         if not settings.api_key:
             raise RuntimeError("OpenAI is not configured. Add an API key in DaListener first.")
         meeting_id = str(uuid.uuid4())
+        source = classify_source(url)
+        if not source.supported:
+            raise RuntimeError("This browser page cannot be captured")
         summary = MeetingSummary(
             id=meeting_id,
             title=title or f"Browser tab {tab_id}",
@@ -61,6 +67,9 @@ class BrowserMeetingManager:
             tab_id=tab_id,
             status=MeetingStatus.PREPARING,
             transcription_model=settings.transcription_model,
+            capture_category=source.category,
+            site_domain=source.domain,
+            service_label=source.service_label,
             started_at=datetime.now(timezone.utc),
         )
         transcriber = OpenAIRealtimeTranscriber(

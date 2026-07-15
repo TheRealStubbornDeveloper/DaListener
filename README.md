@@ -1,36 +1,39 @@
 # DaListener
 
-### An OpenAI meeting copilot for multiple Chromium tabs
+### An OpenAI meeting and media copilot for independent Chromium tabs
 
 [![Windows](https://img.shields.io/badge/Windows-11%20%7C%2010-2f81f7?logo=windows)](https://www.microsoft.com/windows)
+[![macOS](https://img.shields.io/badge/macOS-13%2B-111827?logo=apple)](https://www.apple.com/macos/)
 [![OpenAI](https://img.shields.io/badge/AI-OpenAI-111827)](https://developers.openai.com/)
 [![Python](https://img.shields.io/badge/Python-3.11%2B-3776ab?logo=python&logoColor=white)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-0.3.0--alpha.1-d29922)](https://github.com/TheRealStubbornDeveloper/DaListener)
+[![Version](https://img.shields.io/badge/version-0.3.0--alpha.2-d29922)](https://github.com/TheRealStubbornDeveloper/DaListener)
 
-DaListener captures audio from user-selected Chrome, Edge, or Chromium tabs. Every tab becomes an independent meeting with its own OpenAI Realtime transcription session, transcript, alerts, notes, and Q&A context.
+DaListener captures audio from user-selected Chrome, Edge, or Chromium tabs. Every tab becomes an independent OpenAI transcription stream with its own transcript, alerts, notes, and Q&A context. Meeting sites start directly; YouTube and other media receive a clear confirmation before audio leaves the computer.
 
-![DaListener OpenAI dashboard setup](docs/screenshots/dashboard-openai-setup.png)
+![DaListener dashboard](docs/screenshots/dashboard-openai-setup.png)
 
 > [!IMPORTANT]
-> This branch uses OpenAI for transcription and meeting intelligence. Audio and transcript context are sent to the OpenAI API. The old local Moonshine/Whisper desktop implementation is retained only as an optional legacy path.
+> This branch uses OpenAI for transcription and intelligence. Audio and transcript context are sent to the OpenAI API. The old local Moonshine/Whisper desktop implementation remains only as an optional legacy path.
 
 ## What it does
 
-- Captures multiple meeting tabs independently; overlapping meetings do not get mixed together.
+- Captures multiple meeting or media tabs independently; overlapping streams never get mixed together.
+- Recognizes common meeting sites such as Zoom, Google Meet, Teams, and Webex.
+- Warns before capturing YouTube, Vimeo, Twitch, or an unfamiliar website. The user can remember approval per website and reset approvals from the dashboard.
 - Uses `gpt-realtime-whisper` for low-latency streaming transcription.
 - Saves final revisions in SQLite for recovery and writes a timestamped TXT file when capture stops.
 - Detects `Vladimir` and `Vlad` with exact local matching and highlights the relevant utterance.
 - Uses OpenAI every 30 seconds for summaries, decisions, action items, unfamiliar-technology explanations, and conservative reply suggestions.
-- Answers questions such as “What did Arjun just say?” using the selected meeting transcript.
+- Answers questions such as “What did Arjun just say?” using the selected stream's transcript.
 - Never requests microphone access. Join as a listener on this machine and speak from another device.
-- Keeps the OpenAI API key in the Python bridge and Windows Credential Manager—not in the extension or dashboard JavaScript.
+- Keeps the OpenAI API key in the Python bridge and operating-system keychain—not in the extension or dashboard JavaScript.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    A["Chromium meeting tab A"] --> EA["Extension stream A"]
-    B["Chromium meeting tab B"] --> EB["Extension stream B"]
+    A["Zoom tab"] --> EA["Extension stream A"]
+    B["YouTube tab"] --> EB["Extension stream B"]
     EA --> P["Local Python bridge"]
     EB --> P
     P --> RA["OpenAI Realtime session A"]
@@ -43,17 +46,13 @@ flowchart LR
     WS --> UI["Website dashboard"]
 ```
 
-There is no local CPU/GPU transcription fallback and no artificial meeting limit. Practical concurrency depends on network quality and the OpenAI usage tier and rate limits attached to the configured API key. A failed or rate-limited stream is surfaced on its own meeting card without merging it into another meeting.
+There is no local CPU/GPU transcription fallback and no artificial meeting limit. Practical concurrency depends on network quality and the OpenAI usage tier and rate limits attached to the configured API key. A failed or rate-limited stream is surfaced on its own card without being merged into another stream.
 
 ## Install on Windows
 
-Requirements:
+The easiest option is the locally built MSI. Opening it requests administrator approval once because it installs for all users under `Program Files`. DaListener itself runs with normal user privileges.
 
-- Windows 10 or 11
-- Python 3.11+
-- Node.js 20+ for a source build
-- Chrome, Edge, or another Chromium browser version 116+
-- An OpenAI API key with billing and Realtime API access
+For a source checkout, install Python 3.11+, Node.js 20+, Chrome/Edge 116+, and configure an OpenAI API key with billing and Realtime API access:
 
 ```powershell
 git clone https://github.com/TheRealStubbornDeveloper/DaListener.git
@@ -63,17 +62,18 @@ git switch codex/feature-rich-mvp
 .\run.bat
 ```
 
-The dashboard opens in the default browser. Paste the OpenAI API key into the one-time setup card; DaListener stores it through Windows Credential Manager.
+The dashboard opens in the default browser. Paste the OpenAI API key into the one-time setup card; DaListener stores it in Windows Credential Manager.
 
 ### Load and pair the extension
 
 1. Open `chrome://extensions` or `edge://extensions`.
-2. Enable **Developer mode**, select **Load unpacked**, and choose the repository's `extension` folder.
+2. Enable **Developer mode**, select **Load unpacked**, then choose the `BrowserExtension` folder shown by the dashboard's **Open extension** button. A source checkout can use the repository's `extension` folder instead.
 3. In DaListener, select **Pair browser extension**.
-4. Open the extension's options, paste the copied JSON, and save it.
-5. Open a meeting tab and click the extension icon. A red `REC` badge means that tab has its own stream. Repeat for any other tab; click again to stop one stream.
+4. Open the extension options, paste the copied JSON, and save it.
+5. Open a Zoom, Meet, Teams, Webex, YouTube, or other audio tab and click the DaListener icon.
+6. Meeting sites begin immediately. Media and unfamiliar sites first explain what is being captured and require confirmation. A red `REC` badge means that tab has its own stream; click again to stop it.
 
-Chrome requires that per-tab capture starts from a user gesture. Capturing a tab normally mutes it, so DaListener explicitly routes the captured stream back to the browser's audio output.
+Chrome requires a user gesture for each tab capture. Capturing normally mutes a tab, so DaListener explicitly routes the captured stream back to the browser's audio output.
 
 ## Development
 
@@ -98,14 +98,20 @@ python -m pytest
 npm.cmd --prefix frontend run build
 ```
 
-Set `OPENAI_API_KEY` to use an environment variable instead of Credential Manager. The service reads `DALISTENER_TRANSCRIPTION_MODEL` and `DALISTENER_INTELLIGENCE_MODEL` for model overrides.
+Set `OPENAI_API_KEY` to use an environment variable instead of the OS keychain. The service reads `DALISTENER_TRANSCRIPTION_MODEL` and `DALISTENER_INTELLIGENCE_MODEL` for model overrides.
 
-## Build the Windows test archive
+## Build Windows packages locally
 
-Download the unsigned portable [DaListener 0.3.0 alpha 1 test build](https://github.com/TheRealStubbornDeveloper/DaListener/releases/tag/v0.3.0-alpha.1), extract the complete folder, and run `DaListener.exe`. Keep `_internal` beside the executable. The unpacked Chromium extension is loaded separately from this repository's `extension` folder.
+No GitHub-hosted runner is required. The portable archive build is:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-release.ps1
+```
+
+The MSI build also creates the portable archive, downloads the official .NET 8 SDK into `build\tools`, installs WiX 5 locally, and writes an SHA-256 checksum:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-msi.ps1
 ```
 
 Outputs:
@@ -115,37 +121,58 @@ dist\
 |-- DaListener\
 |   |-- DaListener.exe
 |   `-- _internal\
-`-- DaListener-0.3.0-alpha.1-windows-x64.zip
+|-- DaListener-0.3.0-alpha.2-windows-x64.zip
+|-- DaListener-0.3.0-alpha.2-windows-x64.msi
+`-- DaListener-0.3.0-alpha.2-windows-x64.msi.sha256
 ```
 
-Load the extension separately from the source `extension` directory for this alpha. The portable executable serves the built React dashboard and opens it with a one-time local authentication token.
+Beta packages are unsigned by default. To sign locally, install `signtool.exe` and set `DALISTENER_WINDOWS_SIGN_PFX` and `DALISTENER_WINDOWS_SIGN_PASSWORD` before running the MSI build.
+
+## Build macOS in the future VM
+
+The application code, Finder integration, OS keychain storage, universal PyInstaller specification, DMG creation, architecture checks, signing, and optional notarization hooks are included. The DMG must be built and tested on macOS; PyInstaller cannot cross-compile it from Windows.
+
+On a locally controlled macOS 13+ VM with Python 3.11+, Node.js 20+, and Xcode command-line tools:
+
+```bash
+chmod +x ./build-release-macos.sh
+./build-release-macos.sh
+```
+
+The script builds `dist/DaListener.app` and `dist/DaListener-0.3.0-alpha.2-macos-universal.dmg`, verifies both Apple Silicon and Intel slices, and writes a checksum. It uses ad-hoc signing unless `APPLE_CODESIGN_IDENTITY` is set. Set the `APPLE_NOTARY_*` variables to notarize with an App Store Connect key.
 
 ## File locations
 
-| Item | Location |
-|---|---|
-| Source dashboard | `frontend` |
-| Built dashboard | `frontend\dist` |
-| Chromium extension | `extension` |
-| Portable executable | `dist\DaListener\DaListener.exe` |
-| Release ZIP | `dist\DaListener-0.3.0-alpha.1-windows-x64.zip` |
-| Timestamped transcripts | `%LOCALAPPDATA%\DaListener\Transcripts` |
-| Recovery database | `%LOCALAPPDATA%\DaListener\sessions.db` |
-| OpenAI API key | Windows Credential Manager (`DaListener/OpenAI`) or `OPENAI_API_KEY` |
+| Item | Windows | macOS / source |
+|---|---|---|
+| Chromium extension | `%LOCALAPPDATA%\DaListener\BrowserExtension` | `~/Library/Application Support/DaListener/BrowserExtension` or `extension` |
+| Portable executable | `dist\DaListener\DaListener.exe` | — |
+| MSI / DMG | `dist\DaListener-0.3.0-alpha.2-windows-x64.msi` | `dist/DaListener-0.3.0-alpha.2-macos-universal.dmg` |
+| Timestamped transcripts | `%LOCALAPPDATA%\DaListener\Transcripts` | `~/Library/Application Support/DaListener/Transcripts` |
+| Recovery database | `%LOCALAPPDATA%\DaListener\sessions.db` | `~/Library/Application Support/DaListener/sessions.db` |
+| Capture approvals | `%LOCALAPPDATA%\DaListener\preferences.json` | `~/Library/Application Support/DaListener/preferences.json` |
+| OpenAI API key | Windows Credential Manager | macOS Keychain or `OPENAI_API_KEY` |
 
 ## Privacy and consent
 
-Raw audio is kept only in bounded memory while it is relayed to OpenAI and is not written to disk. Final transcript text and generated meeting notes are sensitive data. Notify participants, follow the recording and consent laws that apply to the meeting, protect the Windows account, and configure OpenAI data controls appropriate for the organization.
+Raw audio is kept only in bounded memory while relayed to OpenAI and is not written to disk. Final transcript text and generated notes are sensitive data. Notify participants, follow applicable recording and consent laws, protect the local account, and configure appropriate OpenAI data controls.
 
 The bridge listens only on `127.0.0.1`, dashboard endpoints require an HttpOnly session cookie, and extension streams require a randomly generated pairing token. Pairing data does not contain the OpenAI API key.
 
+## Roadmap
+
+- Build and test the universal macOS application and DMG inside the locally controlled macOS VM.
+- Keep release builds on developer machines and that VM. Completed MSI, DMG, and checksum files can be uploaded to GitHub Releases manually; DaListener will not depend on paid GitHub-hosted runners.
+- Add production Windows signing and Apple Developer ID notarization credentials when distribution is ready.
+
 ## Current boundaries
 
-- Chrome/Chromium tab audio only; no microphone, native Zoom desktop-process capture, or per-speaker diarization.
+- Chromium tab audio only; no microphone, native Zoom desktop-process capture, or per-speaker diarization.
 - A user must click the extension icon in each tab to begin capture.
-- Speaker names are preserved only when spoken or supplied in transcript text; tab audio alone does not expose Zoom participant metadata.
+- Speaker names are preserved only when spoken or supplied in transcript text; tab audio does not expose Zoom participant metadata.
 - Email notifications need a separately configured mail provider and are not enabled in this alpha.
-- The extension is unpacked in this alpha and is not yet published to a browser store.
+- The extension is unpacked and not yet published to a browser store.
+- The Windows MSI is locally validated but unsigned; the macOS package remains unverified until it is built in the VM.
 
 ## License
 
