@@ -320,10 +320,26 @@ def main() -> None:
     port = sock.getsockname()[1]
     app.state.context.port = port
     url = f"http://127.0.0.1:{port}/auth/exchange?token={app.state.context.launch_token}"
-    print(f"DaListener dashboard: {url}")
-    webbrowser.open(url)
+    print(f"DaListener dashboard: {url}", flush=True)
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="info")
-    uvicorn.Server(config).run(sockets=[sock])
+    server = uvicorn.Server(config)
+
+    async def serve() -> None:
+        async def open_dashboard_when_ready() -> None:
+            while not server.started and not server.should_exit:
+                await asyncio.sleep(0.05)
+            if server.started:
+                await asyncio.to_thread(webbrowser.open, url)
+
+        browser_task = asyncio.create_task(open_dashboard_when_ready())
+        try:
+            await server.serve(sockets=[sock])
+        finally:
+            if not browser_task.done():
+                browser_task.cancel()
+            await asyncio.gather(browser_task, return_exceptions=True)
+
+    asyncio.run(serve())
 
 
 if __name__ == "__main__":

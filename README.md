@@ -28,7 +28,7 @@ DaListener captures audio from user-selected Chrome, Edge, or Chromium tabs. Eve
 Current Windows MSI SHA-256:
 
 ```text
-f1bf78036d3c2a253cb1abd9b0a1d8a9115838b3f874c158403ccebc309b710d
+2f95ebf87c1f0c61bf1e2fb08090ab4984fdf62a1570bd63dd8c9673be8f97f3
 ```
 
 ## What it does
@@ -96,6 +96,17 @@ git switch codex/feature-rich-mvp
 ```
 
 The dashboard opens in the default browser. Paste the OpenAI API key into the one-time setup card; DaListener stores it in Windows Credential Manager.
+
+### If the dashboard does not open
+
+`run.bat` waits for the local server to report that it is ready before the browser is opened. It also writes live startup logs to:
+
+```text
+%LOCALAPPDATA%\DaListener\Logs\dashboard.stdout.log
+%LOCALAPPDATA%\DaListener\Logs\dashboard.stderr.log
+```
+
+Each launch uses a new random localhost port and one-time authentication token. An address copied from an earlier run will show `ERR_CONNECTION_REFUSED` after that process stops; run `run.bat` again and use the newly opened address. If startup fails, the command window prints the error and the log location instead of exiting silently.
 
 ### Load and pair the extension
 
