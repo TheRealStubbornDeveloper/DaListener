@@ -174,6 +174,14 @@ class LocalModelService:
             engine.prepare(lambda message: self._progress_message(message))
         finally:
             engine.close()
+        if quality == "best":
+            from huggingface_hub import snapshot_download
+            target = self.root / "Whisper" / "large-v3-turbo"
+            self._progress_message("Whisper Turbo: preparing the managed offline GPU model…")
+            snapshot_download(
+                repo_id="mobiuslabsgmbh/faster-whisper-large-v3-turbo",
+                local_dir=target,
+            )
 
     def _progress_message(self, message: str) -> None:
         self.status.message = message

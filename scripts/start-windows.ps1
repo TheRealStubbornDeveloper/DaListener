@@ -14,13 +14,24 @@ $DataDirectory = Join-Path $env:LOCALAPPDATA "DaListener\DaListener"
 $LaunchAuth = Join-Path $DataDirectory "dashboard-auth.json"
 try {
     $Health = Invoke-RestMethod "http://127.0.0.1:8765/api/v1/health" -TimeoutSec 2
-    if ($Health.app -eq "DaListener" -and $Health.status -eq "ready" -and (Test-Path -LiteralPath $LaunchAuth)) {
+    if ($Health.app -eq "DaListener" -and $Health.status -eq "ready" -and $Health.api_version -ge 2 -and (Test-Path -LiteralPath $LaunchAuth)) {
         $LaunchToken = (Get-Content -LiteralPath $LaunchAuth -Raw | ConvertFrom-Json).launch_token
         if ($LaunchToken) {
             $ExistingUrl = "http://127.0.0.1:8765/auth/exchange?token=$LaunchToken"
             Start-Process $ExistingUrl
             Write-Host "DaListener was already running and has been opened." -ForegroundColor Green
             exit 0
+        }
+    }
+    if ($Health.app -eq "DaListener" -and $Health.status -eq "ready" -and -not ($Health.api_version -ge 2)) {
+        Write-Host "Restarting an older DaListener backend to match the current dashboard..." -ForegroundColor Yellow
+        $OwnerPid = Get-NetTCPConnection -LocalAddress "127.0.0.1" -LocalPort 8765 -State Listen -ErrorAction Stop | Select-Object -First 1 -ExpandProperty OwningProcess
+        if ($OwnerPid) {
+            Stop-Process -Id $OwnerPid -Force -ErrorAction Stop
+            $Deadline = [DateTime]::UtcNow.AddSeconds(5)
+            while ([DateTime]::UtcNow -lt $Deadline -and (Get-NetTCPConnection -LocalAddress "127.0.0.1" -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue)) {
+                Start-Sleep -Milliseconds 100
+            }
         }
     }
 } catch {

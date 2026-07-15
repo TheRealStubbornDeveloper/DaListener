@@ -1,4 +1,4 @@
-import type { Bootstrap, DashboardEvent, LocalModelStatus, Pricing, TranscriptEvent, UploadResult, Usage } from "./types";
+import type { Bootstrap, DashboardEvent, LocalModelStatus, Pricing, TranscriptEvent, Usage } from "./types";
 
 async function json<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -29,14 +29,14 @@ export const api = {
   ask: (meetingId: string, question: string) => json<{ answer: string }>(`/api/v1/meetings/${meetingId}/ask`, { method: "POST", body: JSON.stringify({ question }) })
 };
 
-export async function uploadMedia(file: File, watchedNames: string, provider: "auto" | "cloud" | "local"): Promise<UploadResult> {
+export async function uploadMedia(file: File, watchedNames: string, provider: "auto" | "cloud" | "local"): Promise<{job_id: string; status: string; file_name: string; progress: number}> {
   const body = new FormData();
   body.append("media", file);
   body.append("watched_names", watchedNames);
   body.append("provider", provider);
   const response = await fetch("/api/v1/uploads/transcribe", { method: "POST", credentials: "same-origin", body });
   if (!response.ok) throw new Error((await response.text()) || `${response.status}`);
-  return response.json() as Promise<UploadResult>;
+  return response.json();
 }
 
 export function connectEvents(since: number, onEvent: (event: DashboardEvent) => void, onState: (state: string) => void) {

@@ -28,7 +28,7 @@ DaListener captures audio from tabs selected through Chromium's native sharing d
 Current Windows MSI SHA-256:
 
 ```text
-8c9c3c62f8e9e336a222959696c58d5490c80f3ba7912b5025532cf53569d88c
+54425acc9e6e01078cdc21be99dbf52d726bf0a7e01f1268ffcfcbb07557b09f
 ```
 
 ## What it does
@@ -155,7 +155,7 @@ Use **Stop DaListener** in the dashboard or the Start-menu shortcut when finishe
 
 ### Full offline plug-and-play package
 
-The full package is a self-contained directory because putting a multi-gigabyte GGUF into an MSI cabinet is unreliable and would duplicate the model under `Program Files`. The currently verified payload is approximately **6.72 GB**. Build it on this Windows machine after preparing Local mode once:
+The full package is a self-contained directory because putting multi-gigabyte model weights into an MSI cabinet is unreliable and would duplicate them under `Program Files`. The currently verified payload is approximately **8.23 GB** and includes Moonshine, 1.51 GB of faster-whisper Turbo weights, LFM Q4, and both CPU/CUDA llama.cpp runtimes. Build it on this Windows machine after preparing Local mode once:
 
 ```powershell
 .\build-full-windows.ps1
@@ -233,7 +233,7 @@ An API key can be stored correctly while its API project has no usable quota. If
 
 ## Uploaded audio and video
 
-The **Upload audio or video** panel accepts a local media file, a comma-separated watched-name list, and an explicit Local/Cloud/Auto provider choice. PyAV decodes the audio track inside the packaged app, so users do not install FFmpeg separately. Local jobs use the prepared English Moonshine model and LFM; cloud jobs use OpenAI `gpt-4o-transcribe` and the configured intelligence model. Results include the timestamped transcript, exact whole-name mentions, grounded notes, action items, and a TXT file under the upload transcript folder. The default watched names are `Vlad` and `Vladimir`, but they are parameters rather than hard-coded behavior.
+The **Upload audio or video** panel accepts a local media file, a comma-separated watched-name list, and an explicit Local/Cloud/Auto provider choice. Its selector inherits the global dashboard provider mode, while still allowing a deliberate per-file override. PyAV decodes the audio track inside the packaged app, so users do not install FFmpeg separately. Processing runs as a background job: finalized phrases stream into the page over the dashboard WebSocket, a progress bar tracks transcription and summarization, and the upload button does not hold a long HTTP request open. Local file jobs prefer faster-whisper Turbo on compatible NVIDIA CUDA hardware and fall back to CPU Moonshine streaming; LFM produces the final grounded notes. Cloud jobs split long media into minute-sized WAV chunks, transcribe up to three chunks concurrently with OpenAI `gpt-4o-transcribe`, and display each completed chunk without sending an oversized original file. Results include the timestamped transcript, exact whole-name mentions, grounded notes, action items, and a TXT file under the upload transcript folder. The default watched names are `Vlad` and `Vladimir`, but they are parameters rather than hard-coded behavior.
 
 ## Troubleshooting
 

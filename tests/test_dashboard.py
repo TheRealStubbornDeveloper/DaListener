@@ -1,11 +1,12 @@
 import numpy as np
-from unittest.mock import AsyncMock
+from unittest.mock import Mock
 from types import SimpleNamespace
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from dalistener.dashboard.intelligence import watched_name
 from dalistener.dashboard.local_models import LocalModelService
+from dalistener.dashboard.uploads import MediaUploadService
 from dalistener.dashboard.openai_realtime import OpenAIRealtimeTranscriber
 from dalistener.dashboard.server import create_app
 from dalistener.dashboard.settings import OpenAISettings, OpenAISettingsStore
@@ -86,7 +87,7 @@ def test_dashboard_launch_auth_survives_app_restart(tmp_path, monkeypatch):
     with TestClient(second) as client:
         health = client.get("/api/v1/health")
         assert health.status_code == 200
-        assert health.json() == {"app": "DaListener", "status": "ready"}
+        assert health.json() == {"app": "DaListener", "status": "ready", "api_version": 2}
 
 
 def test_application_stop_requires_session_and_signals_server(tmp_path, monkeypatch):
@@ -103,16 +104,27 @@ def test_application_stop_requires_session_and_signals_server(tmp_path, monkeypa
 def test_media_upload_is_authenticated_and_parameterizes_watched_names(tmp_path, monkeypatch):
     monkeypatch.setattr(OpenAISettingsStore, "load", lambda _self: OpenAISettings(api_key="test-key"))
     app = create_app(tmp_path)
-    app.state.context.uploads.process = AsyncMock(return_value={"ok": True})
+    app.state.context.uploads.start = Mock(return_value={"job_id": "job-1", "status": "queued"})
     with TestClient(app, follow_redirects=False) as client:
         files = {"media": ("meeting.mp4", b"media", "video/mp4")}
         form = {"watched_names": "Vlad, Alex", "provider": "local"}
         assert client.post("/api/v1/uploads/transcribe", files=files, data=form).status_code == 401
         client.get(f"/auth/exchange?token={app.state.context.launch_token}")
         response = client.post("/api/v1/uploads/transcribe", files=files, data=form)
-        assert response.json() == {"ok": True}
-        call = app.state.context.uploads.process.await_args
+        assert response.json() == {"job_id": "job-1", "status": "queued"}
+        call = app.state.context.uploads.start.call_args
         assert call.args[2:] == (["Vlad", "Alex"], "local")
+
+
+def test_upload_notes_replace_null_local_summary_with_grounded_excerpt():
+    notes = MediaUploadService._normalize_notes(
+        {"summary": "null, false", "action_items": None, "suggested_response": "null, false", "suggestion_confident": True},
+        "[    0s] First grounded sentence.\n[    4s] We need to test the merge logic.",
+    )
+    assert notes["summary"] == "First grounded sentence. We need to test the merge logic."
+    assert notes["action_items"] == ["[4s] We need to test the merge logic."]
+    assert notes["suggested_response"] is None
+    assert MediaUploadService._json_object('```json\n{"summary":"ok","action_items":[]}\n```')["summary"] == "ok"
 
 
 def test_full_package_discovers_bundled_lfm_and_cpu_runtime(tmp_path, monkeypatch):

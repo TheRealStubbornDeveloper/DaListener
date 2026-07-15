@@ -33,6 +33,9 @@ export default function App() {
   const [uploadProvider, setUploadProvider] = useState<"auto" | "cloud" | "local">("auto");
   const [uploading, setUploading] = useState(false);
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
+  const [uploadSegments, setUploadSegments] = useState<{start_seconds: number; end_seconds: number; text: string}[]>([]);
+  const [uploadStatus, setUploadStatus] = useState("");
+  const [uploadProgress, setUploadProgress] = useState(0);
   const selected = meetings.find(meeting => meeting.id === selectedId) || meetings[0];
   const events = useMemo(() => selected ? Object.values(transcripts[selected.id] || {}).sort((a, b) => a.start_ms - b.start_ms) : [], [selected, transcripts]);
   const latestMention = [...events].reverse().find(event => event.stability === "final" && exactMention(event.text));
@@ -43,6 +46,7 @@ export default function App() {
       setMeetings(snapshot.meetings); setOpenAI(snapshot.openai); setPricing(snapshot.pricing); setUsage(snapshot.usage); setLocalModel(snapshot.local_model);
       setBrowserAudioToken(snapshot.browser_audio_token);
       setProviderMode(snapshot.provider_mode);
+      setUploadProvider(snapshot.provider_mode);
       api.pricing(true).then(setPricing).catch(() => {});
       setSelectedId(snapshot.meetings[0]?.id || null);
       disconnect = connectEvents(0, handleEvent, setConnection);
@@ -76,6 +80,16 @@ export default function App() {
     else if (event.event_type === "local-model.updated") setLocalModel(event.payload as unknown as LocalModelStatus);
     else if (event.event_type === "intelligence.error") setError(String(event.payload.message));
     else if (event.event_type === "meeting.saved") setNotice(`Transcript saved: ${String(event.payload.transcript_path)}`);
+    else if (event.event_type === "upload.started") { setUploading(true); setUploadStatus("Preparing transcription…"); }
+    else if (event.event_type === "upload.status") { setUploadStatus(String(event.payload.message || event.payload.status)); setUploadProgress(Number(event.payload.progress || 0)); }
+    else if (event.event_type === "upload.segment") {
+      const segment = event.payload.segment as unknown as {start_seconds: number; end_seconds: number; text: string};
+      setUploadSegments(previous => [...previous.filter(item => !(item.start_seconds === segment.start_seconds && item.text === segment.text)), segment].sort((a, b) => a.start_seconds - b.start_seconds));
+      setUploadProgress(Number(event.payload.progress || 0));
+    } else if (event.event_type === "upload.completed") {
+      const result = event.payload.result as unknown as UploadResult;
+      setUploadResult(result); setUploadSegments(result.segments); setUploadProgress(1); setUploadStatus("Complete"); setUploading(false); setNotice(`Upload transcript saved: ${result.saved_path}`);
+    } else if (event.event_type === "upload.error") { setUploading(false); setUploadStatus("Failed"); setError(String(event.payload.message)); }
   }
   async function saveKey() {
     try { setOpenAI(await api.saveOpenAIKey(apiKey) as OpenAIStatus); setApiKey(""); setNotice("OpenAI key stored in the operating-system credential store."); }
@@ -93,6 +107,7 @@ export default function App() {
     try {
       await api.saveProviderMode(mode);
       setProviderMode(mode);
+      setUploadProvider(mode);
       setNotice(`${mode[0].toUpperCase()}${mode.slice(1)} mode selected. New captures will use this policy.`);
     } catch (reason) { setError(String(reason)); }
   }
@@ -131,12 +146,11 @@ export default function App() {
   }
   async function transcribeUpload() {
     if (!uploadFile) return;
-    setError(""); setUploading(true); setUploadResult(null);
+    setError(""); setUploading(true); setUploadResult(null); setUploadSegments([]); setUploadProgress(0); setUploadStatus("Uploading file…");
     try {
-      const result = await uploadMedia(uploadFile, uploadNames, uploadProvider);
-      setUploadResult(result); setNotice(`Upload transcript saved: ${result.saved_path}`);
-    } catch (reason) { setError(String(reason)); }
-    finally { setUploading(false); }
+      await uploadMedia(uploadFile, uploadNames, uploadProvider);
+      setUploadStatus("Queued for transcription…");
+    } catch (reason) { setUploading(false); setUploadStatus("Upload failed"); setError(String(reason)); }
   }
   return <>
     <header className="topbar"><div><h1>DaListener Live Copilot</h1><p>Share independent Chromium tabs directly—no extension required.</p></div><div className="header-actions"><span className={`connection ${connection}`}>{connection}</span><button onClick={() => api.openTranscriptFolder()}>Open transcripts</button><button onClick={async () => { if (window.confirm("Stop DaListener and all active captures?")) { await api.stopApplication(); window.close(); } }}>Stop DaListener</button><button className="primary-action" onClick={addSource} disabled={addingSource}>{addingSource ? "Waiting for picker…" : "+ Add audio source"}</button></div></header>
@@ -148,7 +162,7 @@ export default function App() {
         <article className="panel"><span className="eyebrow">OPENAI BILLING</span><h2>{pricing ? `$${pricing.rate_per_minute_usd.toFixed(3)}/minute` : "Loading price…"}</h2><p>{pricing && `$${pricing.rate_per_hour_usd.toFixed(2)}/hour for each active tab`}</p><p className="muted">Today: ${usage?.today_cost_usd.toFixed(4) || "0.0000"} · Month: ${usage?.month_cost_usd.toFixed(4) || "0.0000"}</p>{pricing && <a href={pricing.source_url} target="_blank" rel="noreferrer">Official model price{pricing.stale ? " · cached/stale" : ""}</a>}<div className="key-row"><input type="password" value={adminKey} onChange={event => setAdminKey(event.target.value)} placeholder="Optional organization Admin key" /><button onClick={saveAdminKey} disabled={adminKey.length < 20}>Account totals</button></div></article>
         <article className="panel"><span className="eyebrow">FREE LOCAL FALLBACK</span><h2>{localModel?.state || "checking"}</h2><p>{localModel?.message}</p><p className="muted">{localModel?.compute_device?.toUpperCase()} · recommended maximum {localModel?.recommended_max_tabs || 1} local tab(s) · English only</p>{localModel?.state === "preparing" && <progress max={1} value={localModel.progress} />}{!localModel?.intelligence_ready && localModel?.state !== "preparing" && <><label className="license-row"><input type="checkbox" checked={licenseAccepted} onChange={event => setLicenseAccepted(event.target.checked)} /> I accept the <a href={localModel?.license_url} target="_blank" rel="noreferrer">LFM license</a></label><button onClick={prepareLocal} disabled={!licenseAccepted}>{localModel?.transcription_ready ? "Finish local intelligence setup" : "Prepare local fallback"}</button></>}{localModel?.state === "preparing" && <button className="secondary-action" onClick={() => api.cancelLocal()}>Cancel download</button>}</article>
       </section>
-      <section className="panel upload-panel"><div className="section-heading"><div><span className="eyebrow">FILE TRANSCRIPTION</span><h2>Upload audio or video</h2><p className="muted">Decode locally, transcribe with the selected provider, highlight watched-name mentions, and create grounded notes.</p></div></div><div className="upload-controls"><input type="file" accept="audio/*,video/*" onChange={event => setUploadFile(event.target.files?.[0] || null)} /><input value={uploadNames} onChange={event => setUploadNames(event.target.value)} placeholder="Watched names, comma separated" aria-label="Watched names" /><select value={uploadProvider} onChange={event => setUploadProvider(event.target.value as "auto" | "cloud" | "local")}><option value="auto">Auto provider</option><option value="cloud">Cloud</option><option value="local">Local</option></select><button className="primary-action" onClick={transcribeUpload} disabled={!uploadFile || uploading}>{uploading ? "Transcribing and summarizing…" : "Transcribe file"}</button></div>{uploadResult && <div className="upload-results"><div className="name-alert"><strong>{uploadResult.mentions.length} watched-name mention(s)</strong><span>{uploadResult.watched_names.join(", ")} · {uploadResult.provider}</span></div><div className="dashboard-grid"><article><h3>Summary</h3><p>{uploadResult.notes.summary}</p><h3>Action items</h3>{uploadResult.notes.action_items.length ? <ul>{uploadResult.notes.action_items.map(item => <li key={item}>{item}</li>)}</ul> : <p className="muted">None detected.</p>}</article><article><h3>Mentions</h3>{uploadResult.mentions.map((item, index) => <p key={`${item.start_seconds}-${index}`}><b>{item.start_seconds.toFixed(1)}s:</b> {item.text}</p>)}<details><summary>Full timestamped transcript</summary><pre>{uploadResult.transcript}</pre></details></article></div></div>}</section>
+      <section className="panel upload-panel"><div className="section-heading"><div><span className="eyebrow">FILE TRANSCRIPTION</span><h2>Upload audio or video</h2><p className="muted">Decode locally, transcribe with the selected provider, highlight watched-name mentions, and create grounded notes.</p></div></div><div className="upload-controls"><input type="file" accept="audio/*,video/*,.m4a" onChange={event => setUploadFile(event.target.files?.[0] || null)} /><input value={uploadNames} onChange={event => setUploadNames(event.target.value)} placeholder="Watched names, comma separated" aria-label="Watched names" /><select value={uploadProvider} onChange={event => setUploadProvider(event.target.value as "auto" | "cloud" | "local")}><option value="auto">Auto provider</option><option value="cloud">Cloud</option><option value="local">Local</option></select><button className="primary-action" onClick={transcribeUpload} disabled={!uploadFile || uploading}>{uploading ? "Working…" : "Transcribe file"}</button></div>{uploading && <div className="upload-live"><div><b>{uploadStatus}</b><span>{Math.round(uploadProgress * 100)}%</span></div><progress max={1} value={uploadProgress} /><div className="live-upload-transcript">{uploadSegments.map((item, index) => <p key={`${item.start_seconds}-${index}`}><b>{item.start_seconds.toFixed(1)}s</b> {item.text}</p>)}{!uploadSegments.length && <p className="muted">Waiting for the first finalized phrase…</p>}</div></div>}{uploadResult && <div className="upload-results"><div className="name-alert"><strong>{uploadResult.mentions.length} watched-name mention(s)</strong><span>{uploadResult.watched_names.join(", ")} · {uploadResult.provider}</span></div><div className="dashboard-grid"><article><h3>Summary</h3><p>{uploadResult.notes.summary}</p><h3>Action items</h3>{uploadResult.notes.action_items.length ? <ul>{uploadResult.notes.action_items.map(item => <li key={item}>{item}</li>)}</ul> : <p className="muted">None detected.</p>}</article><article><h3>Mentions</h3>{uploadResult.mentions.map((item, index) => <p key={`${item.start_seconds}-${index}`}><b>{item.start_seconds.toFixed(1)}s:</b> {item.text}</p>)}<details><summary>Full timestamped transcript</summary><pre>{uploadResult.transcript}</pre></details></article></div></div>}</section>
       <section><div className="section-heading"><div><span className="eyebrow">NATIVE TAB SHARING</span><h2>Captured browser tabs</h2><p className="muted">Choose <b>Add audio source</b>, select a Chromium tab, and enable <b>Share tab audio</b>. Repeat for every meeting.</p></div>{openai && <div className={openai.configured ? "capacity" : "capacity warning"}>{openai.active_streams} active · {openai.transcription_model} · {openai.status}</div>}</div>
         <div className="meeting-grid">{meetings.map(meeting => <button className={`meeting-card ${selected?.id === meeting.id ? "active" : ""}`} key={meeting.id} onClick={() => setSelectedId(meeting.id)}><div><span className="eyebrow">{meeting.service_label} · {meeting.capture_category}</span><span className={`badge ${meeting.status}`}>{meeting.status}</span></div><h3>{meeting.title}</h3><p>{meeting.site_domain} · {meeting.transcription_provider === "local" ? `Local ${meeting.compute_device.toUpperCase()}` : "OpenAI"} · {meeting.transcription_model}</p><p className="muted">{meeting.transcription_provider === "openai" ? `$${meeting.estimated_cost_usd.toFixed(4)} estimated` : "No API transcription charge"}{meeting.measured_transcription_lag_seconds != null ? ` · ${meeting.measured_transcription_lag_seconds.toFixed(1)}s measured backlog` : ""}{meeting.provider_reason ? ` · ${meeting.provider_reason}` : ""}</p>{meeting.last_error && <p className="error-text">{meeting.last_error}</p>}</button>)}{!meetings.length && <div className="empty-card"><h3>No shared tabs</h3><p>Select <b>Add audio source</b>, choose a Zoom, Meet, Teams, Webex, YouTube, or other Chromium tab, and check <b>Share tab audio</b>.</p></div>}</div>
       </section>

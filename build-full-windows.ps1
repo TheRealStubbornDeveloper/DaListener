@@ -28,11 +28,16 @@ if (-not (Test-Path (Join-Path $PreparedModels "Moonshine"))) {
     throw "Prepared Moonshine models are missing. Prepare Local mode once in DaListener, then rerun this script."
 }
 
+Write-Host "Preparing the managed faster-whisper Turbo model for offline GPU file transcription..."
+& "$Root\.venv\Scripts\python.exe" "$Root\scripts\prepare-offline-models.py" $PreparedModels
+if ($LASTEXITCODE -ne 0) { throw "The faster-whisper Turbo model could not be prepared." }
+
 if (Test-Path $Output) { Remove-Item -LiteralPath $Output -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $Output,$Assets | Out-Null
 Copy-Item -Path "$Root\dist\DaListener\*" -Destination $Output -Recurse -Force
 Copy-Item -LiteralPath $Model.FullName -Destination $Assets
 Copy-Item -LiteralPath (Join-Path $PreparedModels "Moonshine") -Destination $Assets -Recurse
+Copy-Item -LiteralPath (Join-Path $PreparedModels "Whisper") -Destination $Assets -Recurse
 
 $RuntimeTarget = Join-Path $Assets "LlamaCpp"
 if (Test-Path (Join-Path $PreparedModels "LlamaCpp")) {
@@ -67,7 +72,7 @@ $Manifest = @{
     lfm_model = $Model.Name
     lfm_sha256 = (Get-FileHash (Join-Path $Assets $Model.Name) -Algorithm SHA256).Hash.ToLowerInvariant()
     llama_cpp_release = $Release.tag_name
-    includes = @("DaListener", "Moonshine streaming model", "LFM2.5-8B-A1B GGUF Q4", "llama.cpp CUDA runtime", "llama.cpp CPU runtime")
+    includes = @("DaListener", "Moonshine streaming model", "faster-whisper large-v3-turbo", "LFM2.5-8B-A1B GGUF Q4", "llama.cpp CUDA runtime", "llama.cpp CPU runtime")
 } | ConvertTo-Json -Depth 4
 Set-Content -LiteralPath (Join-Path $Output "offline-assets\manifest.json") -Value $Manifest -Encoding utf8
 

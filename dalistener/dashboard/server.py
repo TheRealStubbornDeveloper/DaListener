@@ -66,7 +66,7 @@ class DashboardContext:
         self.settings = OpenAISettingsStore()
         self.provider_mode = ProviderModeStore(data_dir / "provider-mode.json")
         self.meetings = BrowserMeetingManager(data_dir, self.hub, self.settings, provider_mode_store=self.provider_mode)
-        self.uploads = MediaUploadService(data_dir, self.settings, self.meetings.local_models, self.provider_mode.load)
+        self.uploads = MediaUploadService(data_dir, self.settings, self.meetings.local_models, self.provider_mode.load, self.hub)
         self.port = 0
 
 
@@ -90,6 +90,7 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
             return_exceptions=True,
         )
         await context.meetings.intelligence.close()
+        await context.uploads.close()
 
     app = FastAPI(title="DaListener Dashboard API", version="1.0.0", lifespan=lifespan)
     app.state.context = context
@@ -130,7 +131,7 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
 
     @app.get("/api/v1/health", include_in_schema=False)
     async def health():
-        return {"app": "DaListener", "status": "ready"}
+        return {"app": "DaListener", "status": "ready", "api_version": 2}
 
     @app.post("/api/v1/application/stop", dependencies=[Depends(require_session)])
     async def stop_application():
@@ -158,10 +159,19 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
                         raise HTTPException(status_code=413, detail="Upload exceeds the 4 GB local limit")
                     output.write(chunk)
             names = [name.strip() for name in watched_names.split(",") if name.strip()]
-            return await context.uploads.process(temporary, media.filename or "upload", names, provider)
+            return context.uploads.start(temporary, media.filename or "upload", names, provider)
+        except Exception:
+            temporary.unlink(missing_ok=True)
+            raise
         finally:
             await media.close()
-            temporary.unlink(missing_ok=True)
+
+    @app.get("/api/v1/uploads/{job_id}", dependencies=[Depends(require_session)])
+    async def upload_status(job_id: str):
+        status = context.uploads.status(job_id)
+        if status is None:
+            raise HTTPException(status_code=404, detail="Upload job not found")
+        return status
 
     @app.get("/api/v1/meetings", dependencies=[Depends(require_session)])
     async def meetings():
@@ -383,7 +393,7 @@ def main() -> None:
         try:
             with urllib.request.urlopen("http://127.0.0.1:8765/api/v1/health", timeout=2) as response:
                 health = json.loads(response.read().decode("utf-8"))
-            if health == {"app": "DaListener", "status": "ready"}:
+            if health.get("app") == "DaListener" and health.get("status") == "ready" and int(health.get("api_version", 0)) >= 2:
                 url = f"http://127.0.0.1:8765/auth/exchange?token={app.state.context.launch_token}"
                 print(f"DaListener already running: {url}", flush=True)
                 webbrowser.open(url)
