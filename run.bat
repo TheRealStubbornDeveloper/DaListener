@@ -6,4 +6,4 @@ if not exist ".venv\Scripts\pythonw.exe" (
   pause
   exit /b 1
 )
-start "DaListener" ".venv\Scripts\pythonw.exe" -m dalistener.app
+start "DaListener" ".venv\Scripts\pythonw.exe" -m dalistener.dashboard.server

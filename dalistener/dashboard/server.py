@@ -1,0 +1,246 @@
+from __future__ import annotations
+
+import asyncio
+import os
+import secrets
+import socket
+import sys
+import webbrowser
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+import uvicorn
+
+from platformdirs import user_data_path
+from pydantic import BaseModel, Field
+
+from .contracts import BootstrapResponse, ExtensionAck, ExtensionHello
+from .events import EventHub
+from .meetings import BrowserMeetingManager
+from .settings import OpenAISettingsStore
+
+
+class OpenAIKeyUpdate(BaseModel):
+    api_key: str = Field(min_length=20, max_length=512)
+
+
+class MeetingQuestion(BaseModel):
+    question: str = Field(min_length=2, max_length=2000)
+
+
+class DashboardContext:
+    def __init__(self, data_dir: Path):
+        self.data_dir = data_dir
+        self.launch_token = secrets.token_urlsafe(32)
+        self.extension_token = secrets.token_urlsafe(32)
+        self.session_token = secrets.token_urlsafe(32)
+        self.hub = EventHub()
+        self.settings = OpenAISettingsStore()
+        self.meetings = BrowserMeetingManager(data_dir, self.hub, self.settings)
+        self.port = 0
+
+
+def _frontend_dir() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(getattr(sys, "_MEIPASS")) / "frontend"
+    return Path(__file__).resolve().parents[2] / "frontend" / "dist"
+
+
+def create_app(data_dir: Path | None = None) -> FastAPI:
+    root = Path(data_dir or os.environ.get("DALISTENER_DATA_DIR") or user_data_path("DaListener", "DaListener"))
+    root.mkdir(parents=True, exist_ok=True)
+    context = DashboardContext(root)
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        context.hub.bind()
+        yield
+        await asyncio.gather(
+            *(context.meetings.stop(meeting.id) for meeting in context.meetings.summaries() if meeting.status != "ended"),
+            return_exceptions=True,
+        )
+
+    app = FastAPI(title="DaListener Dashboard API", version="1.0.0", lifespan=lifespan)
+    app.state.context = context
+
+    def require_session(
+        dalistener_session: str | None = Cookie(default=None),
+        x_dalistener_token: str | None = Header(default=None),
+    ) -> None:
+        if not secrets.compare_digest(dalistener_session or x_dalistener_token or "", context.session_token):
+            raise HTTPException(status_code=401, detail="Dashboard session required")
+
+    @app.get("/auth/exchange", include_in_schema=False)
+    async def exchange(token: str = Query(...)):
+        if not secrets.compare_digest(token, context.launch_token):
+            raise HTTPException(status_code=401, detail="Invalid launch token")
+        response = RedirectResponse("/", status_code=303)
+        response.set_cookie(
+            "dalistener_session",
+            context.session_token,
+            httponly=True,
+            samesite="strict",
+            secure=False,
+            max_age=12 * 60 * 60,
+        )
+        return response
+
+    @app.get("/api/v1/bootstrap", response_model=BootstrapResponse, dependencies=[Depends(require_session)])
+    async def bootstrap(request: Request):
+        scheme = "wss" if request.url.scheme == "https" else "ws"
+        return BootstrapResponse(
+            meetings=context.meetings.summaries(),
+            openai=context.meetings.openai_status(),
+            extension_audio_url=f"{scheme}://{request.url.netloc}/api/v1/extension/audio",
+        )
+
+    @app.post("/api/v1/extension/pairing", dependencies=[Depends(require_session)])
+    async def extension_pairing(request: Request):
+        scheme = "wss" if request.url.scheme == "https" else "ws"
+        return {
+            "audio_url": f"{scheme}://{request.url.netloc}/api/v1/extension/audio",
+            "token": context.extension_token,
+        }
+
+    @app.get("/api/v1/meetings", dependencies=[Depends(require_session)])
+    async def meetings():
+        return context.meetings.summaries()
+
+    @app.get("/api/v1/settings/openai", dependencies=[Depends(require_session)])
+    async def openai_settings():
+        return context.meetings.openai_status()
+
+    @app.put("/api/v1/settings/openai", dependencies=[Depends(require_session)])
+    async def update_openai_settings(update: OpenAIKeyUpdate):
+        try:
+            context.settings.save_api_key(update.api_key)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Could not store the API key securely: {exc}") from exc
+        status = context.meetings.openai_status()
+        context.hub.publish("openai.updated", None, status.model_dump(mode="json"))
+        return status
+
+    @app.post("/api/v1/transcripts/open-folder", dependencies=[Depends(require_session)])
+    async def open_transcript_folder():
+        path = context.data_dir / "Transcripts"
+        path.mkdir(parents=True, exist_ok=True)
+        if sys.platform == "win32":
+            os.startfile(path)  # type: ignore[attr-defined]
+        else:
+            raise HTTPException(status_code=501, detail="Open folder is currently implemented for Windows")
+        return {"ok": True, "path": str(path)}
+
+    @app.get("/api/v1/meetings/{meeting_id}/transcript", dependencies=[Depends(require_session)])
+    async def transcript(meeting_id: str):
+        return context.meetings.transcript(meeting_id)
+
+    @app.post("/api/v1/meetings/{meeting_id}/stop", dependencies=[Depends(require_session)])
+    async def stop_meeting(meeting_id: str):
+        await context.meetings.stop(meeting_id)
+        return {"ok": True}
+
+    @app.post("/api/v1/meetings/{meeting_id}/ask", dependencies=[Depends(require_session)])
+    async def ask_meeting(meeting_id: str, request: MeetingQuestion):
+        try:
+            answer = await context.meetings.intelligence.answer(meeting_id, request.question)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"answer": answer}
+
+    @app.websocket("/api/v1/events")
+    async def events(websocket: WebSocket, since: int = 0):
+        cookie = websocket.cookies.get("dalistener_session", "")
+        token = websocket.query_params.get("token", "")
+        if not secrets.compare_digest(cookie or token, context.session_token):
+            await websocket.close(code=4401)
+            return
+        origin = websocket.headers.get("origin")
+        if origin and origin not in {f"http://127.0.0.1:{context.port}", f"http://localhost:{context.port}"}:
+            await websocket.close(code=4403)
+            return
+        await websocket.accept()
+        queue = context.hub.subscribe(since)
+        try:
+            while True:
+                event = await queue.get()
+                await websocket.send_json(event.model_dump(mode="json"))
+        except WebSocketDisconnect:
+            pass
+        finally:
+            context.hub.unsubscribe(queue)
+
+    @app.websocket("/api/v1/extension/audio")
+    async def extension_audio(websocket: WebSocket):
+        await websocket.accept()
+        meeting_id: str | None = None
+        try:
+            hello = ExtensionHello.model_validate_json(await websocket.receive_text())
+            if not secrets.compare_digest(hello.token, context.extension_token):
+                await websocket.close(code=4401, reason="Pair the extension from the DaListener dashboard")
+                return
+            runtime = await context.meetings.start_browser_meeting(
+                hello.title, hello.tab_id, hello.browser, hello.sample_rate,
+            )
+            meeting_id = runtime.summary.id
+            ack = ExtensionAck(
+                meeting_id=meeting_id,
+                transcription_model=runtime.summary.transcription_model,
+            )
+            await websocket.send_text(ack.model_dump_json())
+            while True:
+                message = await websocket.receive()
+                if message.get("bytes") is not None:
+                    context.meetings.accept_pcm(meeting_id, message["bytes"])
+                elif message.get("type") == "websocket.disconnect":
+                    break
+        except WebSocketDisconnect:
+            pass
+        except Exception as exc:
+            try:
+                await websocket.send_json({"type": "error", "message": str(exc)})
+            except Exception:
+                pass
+        finally:
+            if meeting_id:
+                await context.meetings.stop(meeting_id)
+
+    frontend = _frontend_dir()
+    assets = frontend / "assets"
+    if assets.exists():
+        app.mount("/assets", StaticFiles(directory=assets), name="assets")
+
+    @app.get("/{path:path}", include_in_schema=False)
+    async def frontend_fallback(path: str):
+        if path.startswith("api/"):
+            return JSONResponse({"detail": "Not found"}, status_code=404)
+        index = frontend / "index.html"
+        if index.exists():
+            return FileResponse(index)
+        return JSONResponse(
+            {"detail": "Dashboard frontend is not built. Run npm.cmd install and npm.cmd run build in frontend/."},
+            status_code=503,
+        )
+
+    return app
+
+
+def main() -> None:
+    app = create_app()
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind(("127.0.0.1", 0))
+    sock.listen(128)
+    port = sock.getsockname()[1]
+    app.state.context.port = port
+    url = f"http://127.0.0.1:{port}/auth/exchange?token={app.state.context.launch_token}"
+    print(f"DaListener dashboard: {url}")
+    webbrowser.open(url)
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="info")
+    uvicorn.Server(config).run(sockets=[sock])
+
+
+if __name__ == "__main__":
+    main()

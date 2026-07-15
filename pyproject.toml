@@ -4,11 +4,21 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dalistener"
-version = "0.2.0a4"
-description = "Local, Windows-first live transcription for microphone and system audio"
+version = "0.3.0a1"
+description = "OpenAI-powered multi-meeting transcription dashboard for Chromium tabs"
 requires-python = ">=3.11"
 dependencies = [
+  "fastapi>=0.116",
+  "uvicorn>=0.35",
+  "websockets>=15.0",
+  "openai>=2.0",
+  "keyring>=25.6",
   "numpy>=1.26",
+  "platformdirs>=4.3",
+]
+
+[project.optional-dependencies]
+legacy-local = [
   "psutil>=6.0",
   "SoundCard>=0.4.3",
   "moonshine-voice>=0.0.68",
@@ -16,8 +26,6 @@ dependencies = [
   "PySide6>=6.8",
   "msvc-runtime>=14.44; platform_system == 'Windows'",
 ]
-
-[project.optional-dependencies]
 best = [
   "nvidia-cublas-cu12>=12.9; platform_system == 'Windows'",
   "nvidia-cudnn-cu12>=9.0; platform_system == 'Windows'",
@@ -26,7 +34,9 @@ test = ["pytest>=8.0"]
 build = ["pyinstaller>=6.0"]
 
 [project.scripts]
-dalistener = "dalistener.app:main"
+dalistener = "dalistener.dashboard.server:main"
+dalistener-dashboard = "dalistener.dashboard.server:main"
+dalistener-legacy = "dalistener.app:main"
 
 [tool.setuptools.packages.find]
 include = ["dalistener*"]
