@@ -15,6 +15,22 @@ DaListener captures audio from user-selected Chrome, Edge, or Chromium tabs. Eve
 > [!IMPORTANT]
 > This branch uses OpenAI for transcription and intelligence. Audio and transcript context are sent to the OpenAI API. The old local Moonshine/Whisper desktop implementation remains only as an optional legacy path.
 
+## Alpha 2 status
+
+| Area | Status |
+|---|---|
+| Windows 10/11 | MSI and portable ZIP built and validated locally |
+| Chromium capture | Chrome and Edge tab capture, including simultaneous independent tabs |
+| Meeting sources | Zoom, Google Meet, Microsoft Teams, and Webex start directly |
+| Media sources | YouTube, Vimeo, Twitch, and unfamiliar sites require confirmation |
+| macOS 13+ | Application and universal DMG build scripts are ready; VM build/testing remains on the roadmap |
+
+Current Windows MSI SHA-256:
+
+```text
+f1bf78036d3c2a253cb1abd9b0a1d8a9115838b3f874c158403ccebc309b710d
+```
+
 ## What it does
 
 - Captures multiple meeting or media tabs independently; overlapping streams never get mixed together.
@@ -52,6 +68,23 @@ There is no local CPU/GPU transcription fallback and no artificial meeting limit
 
 The easiest option is the locally built MSI. Opening it requests administrator approval once because it installs for all users under `Program Files`. DaListener itself runs with normal user privileges.
 
+### Quick start with the MSI
+
+1. Build the installer with `build-msi.ps1`, or obtain the alpha 2 MSI from the project owner.
+2. Open `dist\DaListener-0.3.0-alpha.2-windows-x64.msi` and approve the installer prompt.
+3. Start **DaListener** from the Windows Start menu.
+4. Save an OpenAI API key in the one-time setup panel.
+5. Select **Open extension**, load that folder as an unpacked Chromium extension, then select **Pair extension** and paste the pairing JSON into the extension options.
+6. Click the extension icon in every tab you want to transcribe. Each tab receives a separate transcript and OpenAI session.
+
+The alpha installer is unsigned, so Windows can show an **Unknown publisher** warning. Verify its SHA-256 against the value above before installation.
+
+```powershell
+(Get-FileHash .\dist\DaListener-0.3.0-alpha.2-windows-x64.msi -Algorithm SHA256).Hash.ToLowerInvariant()
+```
+
+### Run from source
+
 For a source checkout, install Python 3.11+, Node.js 20+, Chrome/Edge 116+, and configure an OpenAI API key with billing and Realtime API access:
 
 ```powershell
@@ -68,7 +101,7 @@ The dashboard opens in the default browser. Paste the OpenAI API key into the on
 
 1. Open `chrome://extensions` or `edge://extensions`.
 2. Enable **Developer mode**, select **Load unpacked**, then choose the `BrowserExtension` folder shown by the dashboard's **Open extension** button. A source checkout can use the repository's `extension` folder instead.
-3. In DaListener, select **Pair browser extension**.
+3. In DaListener, select **Pair extension**.
 4. Open the extension options, paste the copied JSON, and save it.
 5. Open a Zoom, Meet, Teams, Webex, YouTube, or other audio tab and click the DaListener icon.
 6. Meeting sites begin immediately. Media and unfamiliar sites first explain what is being captured and require confirmation. A red `REC` badge means that tab has its own stream; click again to stop it.
@@ -127,6 +160,8 @@ dist\
 ```
 
 Beta packages are unsigned by default. To sign locally, install `signtool.exe` and set `DALISTENER_WINDOWS_SIGN_PFX` and `DALISTENER_WINDOWS_SIGN_PASSWORD` before running the MSI build.
+
+The build is intentionally local: it does not create or require a GitHub Actions workflow. Upload the MSI, ZIP, and checksum to a GitHub Release manually when a public prerelease is desired.
 
 ## Build macOS in the future VM
 
