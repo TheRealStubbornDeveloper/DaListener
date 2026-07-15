@@ -29,6 +29,7 @@ from .contracts import (
 )
 from .events import EventHub
 from .meetings import BrowserMeetingManager
+from .pairing import ExtensionPairingStore
 from .platform import open_folder, synchronize_browser_extension
 from .preferences import CapturePreferenceStore
 from .settings import OpenAISettingsStore
@@ -47,7 +48,7 @@ class DashboardContext:
     def __init__(self, data_dir: Path):
         self.data_dir = data_dir
         self.launch_token = secrets.token_urlsafe(32)
-        self.extension_token = secrets.token_urlsafe(32)
+        self.extension_token = ExtensionPairingStore(data_dir / "extension-pairing.json").token()
         self.session_token = secrets.token_urlsafe(32)
         self.hub = EventHub()
         self.settings = OpenAISettingsStore()
@@ -121,6 +122,10 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
             openai=context.meetings.openai_status(),
             extension_audio_url=f"{scheme}://{request.url.netloc}/api/v1/extension/audio",
         )
+
+    @app.get("/api/v1/health", include_in_schema=False)
+    async def health():
+        return {"app": "DaListener", "status": "ready"}
 
     @app.post("/api/v1/extension/pairing", dependencies=[Depends(require_session)])
     async def extension_pairing(request: Request):
@@ -315,7 +320,19 @@ def main() -> None:
     app = create_app()
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    sock.bind(("127.0.0.1", 0))
+    configured_port = os.environ.get("DALISTENER_PORT")
+    preferred_port = int(configured_port or "8765")
+    try:
+        sock.bind(("127.0.0.1", preferred_port))
+    except OSError:
+        if configured_port:
+            raise
+        print(
+            "DaListener warning: port 8765 is unavailable; using a temporary port. "
+            "Pair the extension again for this run.",
+            flush=True,
+        )
+        sock.bind(("127.0.0.1", 0))
     sock.listen(128)
     port = sock.getsockname()[1]
     app.state.context.port = port

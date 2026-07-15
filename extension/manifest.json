@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "DaListener Tab Capture",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Capture selected Chromium meeting, media, and audio tabs as independent DaListener streams.",
   "permissions": ["activeTab", "offscreen", "storage", "tabCapture"],
   "host_permissions": ["http://127.0.0.1/*", "http://localhost/*"],

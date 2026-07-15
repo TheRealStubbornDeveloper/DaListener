@@ -29,6 +29,22 @@ def test_float_audio_is_resampled_for_openai():
     assert len(output) == 2_400 * 2
 
 
+def test_realtime_transcription_uses_supported_delay_field():
+    async def transcript(_payload):
+        pass
+
+    async def status(_state, _message):
+        pass
+
+    transcriber = OpenAIRealtimeTranscriber("test-key", "gpt-realtime-whisper", 24_000, transcript, status)
+    transcription = transcriber._session_update()["session"]["audio"]["input"]["transcription"]
+    assert transcription["delay"] == "low"
+    assert "latency" not in transcription
+    assert transcriber.connection_model == "gpt-realtime-2.1"
+    quota_error = transcriber._provider_error(RuntimeError("You exceeded your current quota"))
+    assert str(quota_error) == "OpenAI API quota is unavailable. Add API billing or credits, then try capture again."
+
+
 def test_dashboard_bootstrap_never_exposes_api_key(tmp_path, monkeypatch):
     monkeypatch.setattr(
         OpenAISettingsStore,
@@ -96,3 +112,15 @@ def test_extension_preflight_allows_chromium_extension_cors(tmp_path, monkeypatc
         )
         assert response.status_code == 200
         assert response.headers["access-control-allow-origin"] == f"chrome-extension://{'a' * 32}"
+
+
+def test_extension_pairing_survives_app_restart(tmp_path, monkeypatch):
+    monkeypatch.setattr(OpenAISettingsStore, "load", lambda _self: OpenAISettings(api_key="test-key"))
+    first = create_app(tmp_path)
+    second = create_app(tmp_path)
+    assert first.state.context.extension_token == second.state.context.extension_token
+
+    with TestClient(second) as client:
+        health = client.get("/api/v1/health")
+        assert health.status_code == 200
+        assert health.json() == {"app": "DaListener", "status": "ready"}

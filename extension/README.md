@@ -9,3 +9,5 @@
 Known meeting sites start directly. YouTube and other media or unfamiliar sites show a confirmation describing the source and OpenAI processing. Approval can be remembered for that website and removed later under **Capture settings** in the dashboard.
 
 The extension captures tab audio only. It never requests microphone access and never receives the OpenAI API key.
+
+After pulling an extension update, use **Reload** on `chrome://extensions` and pair once more. Version 0.2.1 keeps the local token and stable port across normal DaListener restarts. `REC` appears only after the full capture handshake succeeds; hover an `ERR` badge or open extension options to see the last error.

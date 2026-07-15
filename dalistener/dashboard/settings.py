@@ -11,6 +11,7 @@ class OpenAISettings:
     api_key: str | None
     transcription_model: str = "gpt-realtime-whisper"
     intelligence_model: str = "gpt-5.6-luna"
+    realtime_connection_model: str = "gpt-realtime-2.1"
 
 
 class OpenAISettingsStore:
@@ -30,6 +31,7 @@ class OpenAISettingsStore:
             api_key=key,
             transcription_model=os.environ.get("DALISTENER_TRANSCRIPTION_MODEL", "gpt-realtime-whisper"),
             intelligence_model=os.environ.get("DALISTENER_INTELLIGENCE_MODEL", "gpt-5.6-luna"),
+            realtime_connection_model=os.environ.get("DALISTENER_REALTIME_MODEL", "gpt-realtime-2.1"),
         )
 
     def save_api_key(self, api_key: str) -> None:

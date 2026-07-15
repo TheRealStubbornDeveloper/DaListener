@@ -14,7 +14,7 @@ document.querySelector("#save").addEventListener("click", async () => {
     await chrome.storage.local.remove("lastError");
     lastError.textContent = "";
     status.className = "ok";
-    status.textContent = "Paired. Click the extension icon in each meeting tab to start capture.";
+    status.textContent = "Paired. Click the extension icon in each meeting or media tab to start capture.";
   } catch (error) {
     status.className = "";
     status.textContent = String(error);

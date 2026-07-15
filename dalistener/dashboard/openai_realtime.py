@@ -33,12 +33,14 @@ class OpenAIRealtimeTranscriber:
         input_sample_rate: int,
         on_transcript: TranscriptCallback,
         on_status: StatusCallback,
+        connection_model: str = "gpt-realtime-2.1",
     ):
         self.api_key = api_key
         self.model = model
         self.input_sample_rate = input_sample_rate
         self.on_transcript = on_transcript
         self.on_status = on_status
+        self.connection_model = connection_model
         self.queue: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=300)
         self.task: asyncio.Task | None = None
         self.ready = asyncio.Event()
@@ -91,8 +93,47 @@ class OpenAIRealtimeTranscriber:
             values = np.interp(positions, np.arange(len(values)), values)
         return (np.clip(values, -1, 1) * 32767).astype("<i2").tobytes()
 
+    def _session_update(self) -> dict:
+        return {
+            "type": "session.update",
+            "session": {
+                "type": "transcription",
+                "audio": {"input": {
+                    "format": {"type": "audio/pcm", "rate": 24000},
+                    "transcription": {
+                        "model": self.model,
+                        "language": "en",
+                        "delay": "low",
+                    },
+                }},
+            },
+        }
+
+    async def _wait_for_session_ready(self, websocket) -> None:
+        while True:
+            event = json.loads(await asyncio.wait_for(websocket.recv(), timeout=15))
+            event_type = event.get("type", "")
+            if event_type == "error":
+                error = event.get("error", {})
+                raise RuntimeError(error.get("message", "OpenAI rejected the transcription session"))
+            if event_type.endswith("session.updated"):
+                return
+
+    def _provider_error(self, exc: Exception) -> RuntimeError:
+        detail = str(exc)
+        normalized_detail = detail.lower()
+        if "insufficient_quota" in normalized_detail or "exceeded your current quota" in normalized_detail:
+            return RuntimeError(
+                "OpenAI API quota is unavailable. Add API billing or credits, then try capture again."
+            )
+        if "invalid_model" in normalized_detail:
+            return RuntimeError(
+                f"OpenAI Realtime model {self.connection_model!r} is unavailable for this API project."
+            )
+        return RuntimeError(f"OpenAI Realtime error: {detail}")
+
     async def _run(self) -> None:
-        url = f"wss://api.openai.com/v1/realtime?model={self.model}"
+        url = f"wss://api.openai.com/v1/realtime?model={self.connection_model}"
         try:
             async with connect(
                 url,
@@ -100,20 +141,8 @@ class OpenAIRealtimeTranscriber:
                 max_size=8 * 1024 * 1024,
                 ping_interval=20,
             ) as websocket:
-                await websocket.send(json.dumps({
-                    "type": "session.update",
-                    "session": {
-                        "type": "transcription",
-                        "audio": {"input": {
-                            "format": {"type": "audio/pcm", "rate": 24000},
-                            "transcription": {
-                                "model": self.model,
-                                "language": "en",
-                                "latency": "low",
-                            },
-                        }},
-                    },
-                }))
+                await websocket.send(json.dumps(self._session_update()))
+                await self._wait_for_session_ready(websocket)
                 self.ready.set()
                 await self.on_status("connected", "OpenAI Realtime transcription connected")
                 sender = asyncio.create_task(self._send_audio(websocket))
@@ -124,10 +153,9 @@ class OpenAIRealtimeTranscriber:
                 receiver.cancel()
                 await asyncio.gather(receiver, return_exceptions=True)
         except Exception as exc:
-            self.error = exc
+            self.error = self._provider_error(exc)
             self.ready.set()
-            await self.on_status("error", f"OpenAI Realtime error: {exc}")
-            raise
+            await self.on_status("error", str(self.error))
 
     async def _send_audio(self, websocket) -> None:
         speaking = False

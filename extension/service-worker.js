@@ -36,14 +36,21 @@ function apiUrl(pairing) {
 }
 
 async function preflight(tab, pairing) {
-  const response = await fetch(`${apiUrl(pairing)}/api/v1/extension/capture-preflight`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-DaListener-Extension-Token": pairing.token
-    },
-    body: JSON.stringify({tab_id: tab.id, title: tab.title || "", url: tab.url || ""})
-  });
+  const bridge = apiUrl(pairing);
+  let response;
+  try {
+    response = await fetch(`${bridge}/api/v1/extension/capture-preflight`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-DaListener-Extension-Token": pairing.token
+      },
+      body: JSON.stringify({tab_id: tab.id, title: tab.title || "", url: tab.url || ""})
+    });
+  } catch (_error) {
+    throw new Error(`Cannot reach DaListener at ${bridge}. Start DaListener, then pair the extension again.`);
+  }
+  if (response.status === 401) throw new Error("DaListener rejected the saved pairing. Pair the extension again from the dashboard.");
   if (!response.ok) throw new Error((await response.text()) || "Capture preflight failed");
   return response.json();
 }
@@ -51,7 +58,7 @@ async function preflight(tab, pairing) {
 async function beginCapture(tab, pairing, streamId) {
   await ensureOffscreen();
   const id = streamId || await chrome.tabCapture.getMediaStreamId({targetTabId: tab.id});
-  await chrome.runtime.sendMessage({
+  const response = await chrome.runtime.sendMessage({
     target: "offscreen",
     type: "start",
     tabId: tab.id,
@@ -60,9 +67,11 @@ async function beginCapture(tab, pairing, streamId) {
     streamId: id,
     pairing
   });
+  if (!response?.ok) throw new Error(response?.error || "Tab audio could not connect to DaListener");
   await markActive(tab.id, true);
   await chrome.action.setBadgeBackgroundColor({tabId: tab.id, color: "#ef4444"});
   await chrome.action.setBadgeText({tabId: tab.id, text: "REC"});
+  await chrome.action.setTitle({tabId: tab.id, title: "DaListener is capturing this tab"});
 }
 
 async function showWarning(tab, pairing, result) {
@@ -86,6 +95,7 @@ async function reportError(tabId, error) {
   await chrome.storage.local.set({lastError: String(error)});
   await chrome.action.setBadgeBackgroundColor({tabId, color: "#b91c1c"});
   await chrome.action.setBadgeText({tabId, text: "ERR"});
+  await chrome.action.setTitle({tabId, title: `DaListener: ${String(error)}`});
 }
 
 chrome.action.onClicked.addListener(async tab => {
@@ -95,6 +105,7 @@ chrome.action.onClicked.addListener(async tab => {
       await chrome.runtime.sendMessage({target: "offscreen", type: "stop", tabId: tab.id});
       await markActive(tab.id, false);
       await chrome.action.setBadgeText({tabId: tab.id, text: ""});
+      await chrome.action.setTitle({tabId: tab.id, title: "Start DaListener capture for this tab"});
       return;
     }
     const pairing = (await chrome.storage.local.get("pairing")).pairing;
@@ -122,6 +133,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === "stopped") {
     markActive(message.tabId, false).catch(() => {});
     chrome.action.setBadgeText({tabId: message.tabId, text: ""}).catch(() => {});
+    chrome.action.setTitle({tabId: message.tabId, title: "Start DaListener capture for this tab"}).catch(() => {});
   } else if (message.type === "error") {
     reportError(message.tabId, message.message).catch(() => {});
   }

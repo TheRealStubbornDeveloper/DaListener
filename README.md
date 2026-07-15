@@ -28,7 +28,7 @@ DaListener captures audio from user-selected Chrome, Edge, or Chromium tabs. Eve
 Current Windows MSI SHA-256:
 
 ```text
-2f95ebf87c1f0c61bf1e2fb08090ab4984fdf62a1570bd63dd8c9673be8f97f3
+62cb92c7eed4f24159cedb675ea01032b9db871ba2d57d6204c3418dabb88da6
 ```
 
 ## What it does
@@ -106,7 +106,7 @@ The dashboard opens in the default browser. Paste the OpenAI API key into the on
 %LOCALAPPDATA%\DaListener\Logs\dashboard.stderr.log
 ```
 
-Each launch uses a new random localhost port and one-time authentication token. An address copied from an earlier run will show `ERR_CONNECTION_REFUSED` after that process stops; run `run.bat` again and use the newly opened address. If startup fails, the command window prints the error and the log location instead of exiting silently.
+The dashboard normally uses `127.0.0.1:8765` and issues a fresh one-time browser authentication token on every launch. An `/auth/exchange` address copied from an earlier run is intentionally invalid; run `run.bat` again and use the newly opened address. If port 8765 is occupied, DaListener uses a temporary port and asks you to pair the extension again for that run. If startup fails, the command window prints the error and the log location instead of exiting silently.
 
 ### Load and pair the extension
 
@@ -118,6 +118,10 @@ Each launch uses a new random localhost port and one-time authentication token. 
 6. Meeting sites begin immediately. Media and unfamiliar sites first explain what is being captured and require confirmation. A red `REC` badge means that tab has its own stream; click again to stop it.
 
 Chrome requires a user gesture for each tab capture. Capturing normally mutes a tab, so DaListener explicitly routes the captured stream back to the browser's audio output.
+
+After updating DaListener, open `chrome://extensions`, select **Reload** on DaListener Tab Capture, and pair it once more. Extension version `0.2.1` uses the stable local bridge at `127.0.0.1:8765`; its local pairing token then survives normal app restarts. The badge changes to `REC` only after Chrome tab audio, the DaListener WebSocket, and the OpenAI transcription session are all connected. An `ERR` badge exposes the failure in its tooltip and on the extension options page.
+
+An API key can be stored correctly while its API project has no usable quota. If capture reports `OpenAI API quota is unavailable`, add API billing or credits to that project and retry.
 
 ## Development
 
@@ -142,7 +146,7 @@ python -m pytest
 npm.cmd --prefix frontend run build
 ```
 
-Set `OPENAI_API_KEY` to use an environment variable instead of the OS keychain. The service reads `DALISTENER_TRANSCRIPTION_MODEL` and `DALISTENER_INTELLIGENCE_MODEL` for model overrides.
+Set `OPENAI_API_KEY` to use an environment variable instead of the OS keychain. The service reads `DALISTENER_TRANSCRIPTION_MODEL`, `DALISTENER_REALTIME_MODEL`, and `DALISTENER_INTELLIGENCE_MODEL` for model overrides.
 
 ## Build Windows packages locally
 
@@ -191,12 +195,13 @@ The script builds `dist/DaListener.app` and `dist/DaListener-0.3.0-alpha.2-macos
 
 | Item | Windows | macOS / source |
 |---|---|---|
-| Chromium extension | `%LOCALAPPDATA%\DaListener\BrowserExtension` | `~/Library/Application Support/DaListener/BrowserExtension` or `extension` |
+| Chromium extension | `%LOCALAPPDATA%\DaListener\DaListener\BrowserExtension` | `~/Library/Application Support/DaListener/BrowserExtension` or `extension` |
 | Portable executable | `dist\DaListener\DaListener.exe` | — |
 | MSI / DMG | `dist\DaListener-0.3.0-alpha.2-windows-x64.msi` | `dist/DaListener-0.3.0-alpha.2-macos-universal.dmg` |
-| Timestamped transcripts | `%LOCALAPPDATA%\DaListener\Transcripts` | `~/Library/Application Support/DaListener/Transcripts` |
-| Recovery database | `%LOCALAPPDATA%\DaListener\sessions.db` | `~/Library/Application Support/DaListener/sessions.db` |
-| Capture approvals | `%LOCALAPPDATA%\DaListener\preferences.json` | `~/Library/Application Support/DaListener/preferences.json` |
+| Timestamped transcripts | `%LOCALAPPDATA%\DaListener\DaListener\Transcripts` | `~/Library/Application Support/DaListener/Transcripts` |
+| Recovery database | `%LOCALAPPDATA%\DaListener\DaListener\sessions.db` | `~/Library/Application Support/DaListener/sessions.db` |
+| Capture approvals and pairing | `%LOCALAPPDATA%\DaListener\DaListener\*.json` | `~/Library/Application Support/DaListener/*.json` |
+| Startup logs | `%LOCALAPPDATA%\DaListener\Logs` | Terminal output |
 | OpenAI API key | Windows Credential Manager | macOS Keychain or `OPENAI_API_KEY` |
 
 ## Privacy and consent

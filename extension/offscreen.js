@@ -17,6 +17,11 @@ async function startCapture(message) {
   socket.binaryType = "arraybuffer";
   const capture = {stream, context, processor, socket, ready: false};
   captures.set(message.tabId, capture);
+  const started = new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error("DaListener bridge did not acknowledge tab audio within 15 seconds")), 15000);
+    capture.resolveStart = () => { clearTimeout(timeout); resolve(); };
+    capture.rejectStart = reason => { clearTimeout(timeout); reject(reason); };
+  });
   socket.onopen = () => socket.send(JSON.stringify({
     type: "start",
     token: message.pairing.token,
@@ -29,15 +34,35 @@ async function startCapture(message) {
   }));
   socket.onmessage = event => {
     const response = JSON.parse(event.data);
-    if (response.type === "started") capture.ready = true;
-    if (response.type === "error") reportError(message.tabId, response.message);
+    if (response.type === "started") {
+      capture.ready = true;
+      capture.resolveStart();
+    }
+    if (response.type === "error") {
+      const reason = new Error(response.message || "DaListener bridge rejected tab audio");
+      if (!capture.ready) capture.rejectStart(reason);
+      else reportError(message.tabId, reason.message);
+    }
   };
-  socket.onerror = () => reportError(message.tabId, "Could not connect to the DaListener bridge");
-  socket.onclose = () => stopCapture(message.tabId, false);
+  socket.onerror = () => {
+    const reason = new Error("Could not connect to the DaListener bridge");
+    if (!capture.ready) capture.rejectStart(reason);
+    else reportError(message.tabId, reason.message);
+  };
+  socket.onclose = () => {
+    if (!capture.ready) capture.rejectStart(new Error("DaListener bridge closed before capture started"));
+    stopCapture(message.tabId, false);
+  };
   processor.port.onmessage = event => {
     if (capture.ready && socket.readyState === WebSocket.OPEN) socket.send(event.data);
   };
   stream.getAudioTracks()[0].onended = () => stopCapture(message.tabId);
+  try {
+    await started;
+  } catch (error) {
+    await stopCapture(message.tabId);
+    throw error;
+  }
 }
 
 async function stopCapture(tabId, closeSocket = true) {
@@ -56,8 +81,13 @@ function reportError(tabId, message) {
   chrome.runtime.sendMessage({target: "worker", type: "error", tabId, message}).catch(() => {});
 }
 
-chrome.runtime.onMessage.addListener(message => {
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.target !== "offscreen") return;
-  if (message.type === "start") startCapture(message).catch(error => reportError(message.tabId, String(error)));
+  if (message.type === "start") {
+    startCapture(message)
+      .then(() => sendResponse({ok: true}))
+      .catch(error => sendResponse({ok: false, error: String(error)}));
+    return true;
+  }
   if (message.type === "stop") stopCapture(message.tabId);
 });

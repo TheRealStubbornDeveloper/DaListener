@@ -78,6 +78,7 @@ class BrowserMeetingManager:
             input_sample_rate=sample_rate,
             on_transcript=lambda payload: self._on_transcript(meeting_id, payload),
             on_status=lambda status, message: self._on_status(meeting_id, status, message),
+            connection_model=settings.realtime_connection_model,
         )
         runtime = BrowserMeetingRuntime(summary=summary, transcriber=transcriber)
         self.meetings[meeting_id] = runtime
