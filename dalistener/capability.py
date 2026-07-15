@@ -53,6 +53,21 @@ def _register_cuda_runtime_dirs() -> list[Path]:
             registered.append(directory)
         except OSError:
             continue
+    # CTranslate2 resolves these by bare DLL name. Some Windows/Python builds
+    # do not honor add_dll_directory for that late native lookup, so retain
+    # explicit handles for the core CUDA libraries as well.
+    preload = (
+        (site_packages / "nvidia" / "cublas" / "bin" / "cublasLt64_12.dll"),
+        (site_packages / "nvidia" / "cublas" / "bin" / "cublas64_12.dll"),
+        (site_packages / "nvidia" / "cudnn" / "bin" / "cudnn64_9.dll"),
+    )
+    loaded_names = {str(getattr(handle, "_name", "")).lower() for handle in _CUDA_DLL_DIR_HANDLES}
+    for library in preload:
+        if library.exists() and str(library).lower() not in loaded_names:
+            try:
+                _CUDA_DLL_DIR_HANDLES.append(ctypes.WinDLL(str(library)))
+            except OSError:
+                continue
     return registered
 
 

@@ -15,3 +15,6 @@ models/
 *.db-shm
 *.db-wal
 *.log
+frontend/node_modules/
+frontend/dist/
+*.tsbuildinfo

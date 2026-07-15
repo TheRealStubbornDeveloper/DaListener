@@ -6,4 +6,10 @@ if not exist ".venv\Scripts\pythonw.exe" (
   pause
   exit /b 1
 )
-start "DaListener" ".venv\Scripts\pythonw.exe" -m dalistener.app
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\start-windows.ps1"
+if errorlevel 1 (
+  echo.
+  echo DaListener could not start. The error and log location are shown above.
+  pause
+  exit /b 1
+)

@@ -53,7 +53,7 @@ def _register_windows_runtime_dirs() -> None:
 class MoonshineEngine:
     """One Moonshine model with independent microphone and system streams."""
 
-    def __init__(self, model_dir: Path, quality: str, callback: TranscriptCallback):
+    def __init__(self, model_dir: Path, quality: str, callback: TranscriptCallback, enable_finalizer: bool = True):
         self.model_dir = model_dir
         self.quality = quality
         self.callback = callback
@@ -69,6 +69,7 @@ class MoonshineEngine:
         self.finalizer_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="whisper-finalizer")
         self.pending_finalizers: dict[Future, TranscriptEvent] = {}
         self.language = TranscriptionLanguage.AUTO
+        self.enable_finalizer = enable_finalizer
         if quality == "best":
             self.finalizer_model_name = "large-v3-turbo"
             self.finalizer_device = "cuda"
@@ -104,11 +105,19 @@ class MoonshineEngine:
         )
         progress(f"Moonshine: model files ready at {model_path}")
         progress("Moonshine: initializing the ONNX Runtime streaming engine…")
+        update_interval = 0.20 if self.quality == "best" else 0.30 if self.quality == "balanced" else 0.50
+        max_segment_seconds = 8 if self.quality in ("best", "balanced") else 12
         self.transcriber = Transcriber(
-            model_path=str(model_path), model_arch=model_arch, update_interval=0.5,
-            options={"transcription_interval": "0.5", "vad_max_segment_duration": "15"},
+            model_path=str(model_path), model_arch=model_arch, update_interval=update_interval,
+            options={
+                "transcription_interval": str(update_interval),
+                "vad_max_segment_duration": str(max_segment_seconds),
+            },
         )
         progress("Moonshine: streaming model loaded successfully.")
+        if not self.enable_finalizer:
+            progress("Whisper finalizer disabled for this transcription job.")
+            return str(model_path), model_arch
         try:
             label = "Whisper Turbo" if self.quality == "best" else "Multilingual Whisper"
             progress(f"{label}: checking the model cache and {self.finalizer_device.upper()} runtime…")
@@ -159,7 +168,9 @@ class MoonshineEngine:
             self.streams.clear()
             self.listeners.clear()
             for source in sources:
-                stream = self.transcriber.create_stream(update_interval=0.5)
+                stream = self.transcriber.create_stream(
+                    update_interval=0.20 if self.quality == "best" else 0.30 if self.quality == "balanced" else 0.50,
+                )
                 listener = Listener(source)
                 stream.add_listener(listener)
                 stream.start()
@@ -183,7 +194,11 @@ class MoonshineEngine:
             revision = self.revisions[key]
         start_seconds = float(getattr(line, "start_time", getattr(line, "start", 0.0)) or 0.0)
         duration = float(getattr(line, "duration", 0.0) or 0.0)
-        emitted_stability = Stability.DRAFT if stability == Stability.FINAL and self.finalizer else stability
+        audio_data = getattr(line, "audio_data", None)
+        has_audio = audio_data is not None and len(audio_data) > 0
+        with self.lock:
+            use_finalizer = stability == Stability.FINAL and self.finalizer is not None and has_audio and not self.pending_finalizers
+        emitted_stability = Stability.DRAFT if use_finalizer else stability
         transcript_event = TranscriptEvent(
             session_id=self.session_id, source_id=source, utterance_id=line_id, text=text,
             start_ms=max(0, int(start_seconds * 1000)),
@@ -191,8 +206,7 @@ class MoonshineEngine:
             revision=revision, stability=emitted_stability,
         )
         self.callback(transcript_event)
-        audio_data = getattr(line, "audio_data", None)
-        if stability == Stability.FINAL and self.finalizer and audio_data:
+        if use_finalizer:
             future = self.finalizer_pool.submit(
                 self._finalize, transcript_event, np.asarray(audio_data, dtype=np.float32),
             )
@@ -259,7 +273,7 @@ class MoonshineEngine:
         self.stop()
         self.finalizer_pool.shutdown(wait=False, cancel_futures=True)
 
-    def calibrate(self) -> float:
+    def calibrate(self, stream_count: int = 2) -> float:
         """Exercise the loaded model with bundled real speech."""
         if self.transcriber is None:
             self.prepare()
@@ -272,7 +286,7 @@ class MoonshineEngine:
         seconds = len(audio) / sample_rate
         # Benchmark the default worst case: microphone and system recognition
         # are independent, so two simultaneous lanes roughly double ASR work.
-        streams = [self.transcriber.create_stream(update_interval=10.0) for _ in range(2)]
+        streams = [self.transcriber.create_stream(update_interval=10.0) for _ in range(max(1, stream_count))]
         for stream in streams:
             stream.start()
         for offset in range(0, len(audio), 1600):
