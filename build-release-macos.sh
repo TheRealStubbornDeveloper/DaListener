@@ -17,7 +17,7 @@ if [[ ! -x ".venv-macos/bin/python" ]]; then
 fi
 source .venv-macos/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e ".[build,test]"
+python -m pip install -e ".[build,test,local-fallback]"
 
 npm --prefix frontend install
 npm --prefix frontend run build

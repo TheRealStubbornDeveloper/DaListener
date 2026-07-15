@@ -10,6 +10,22 @@ if (-not (Test-Path -LiteralPath $Python)) {
 }
 
 New-Item -ItemType Directory -Force -Path $LogDirectory | Out-Null
+$DataDirectory = Join-Path $env:LOCALAPPDATA "DaListener\DaListener"
+$LaunchAuth = Join-Path $DataDirectory "dashboard-auth.json"
+try {
+    $Health = Invoke-RestMethod "http://127.0.0.1:8765/api/v1/health" -TimeoutSec 2
+    if ($Health.app -eq "DaListener" -and $Health.status -eq "ready" -and (Test-Path -LiteralPath $LaunchAuth)) {
+        $LaunchToken = (Get-Content -LiteralPath $LaunchAuth -Raw | ConvertFrom-Json).launch_token
+        if ($LaunchToken) {
+            $ExistingUrl = "http://127.0.0.1:8765/auth/exchange?token=$LaunchToken"
+            Start-Process $ExistingUrl
+            Write-Host "DaListener was already running and has been opened." -ForegroundColor Green
+            exit 0
+        }
+    }
+} catch {
+    # No healthy DaListener instance owns the stable bridge port.
+}
 Remove-Item -LiteralPath $OutputLog, $ErrorLog -Force -ErrorAction SilentlyContinue
 
 Write-Host "Starting DaListener..."
@@ -26,6 +42,11 @@ $Deadline = [DateTime]::UtcNow.AddSeconds(15)
 while ([DateTime]::UtcNow -lt $Deadline) {
     $Process.Refresh()
     if ($Process.HasExited) {
+        $Output = Get-Content -LiteralPath $OutputLog -Raw -ErrorAction SilentlyContinue
+        if ($Process.ExitCode -eq 0 -and $Output -match "DaListener already running: (http://\S+)") {
+            Write-Host "DaListener was already running and has been opened." -ForegroundColor Green
+            exit 0
+        }
         Write-Host "DaListener exited during startup with code $($Process.ExitCode)." -ForegroundColor Red
         Get-Content -LiteralPath $OutputLog, $ErrorLog -ErrorAction SilentlyContinue
         Write-Host "Startup logs: $LogDirectory" -ForegroundColor Yellow

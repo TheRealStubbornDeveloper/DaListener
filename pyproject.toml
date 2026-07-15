@@ -15,11 +15,18 @@ dependencies = [
   "keyring>=25.6",
   "numpy>=1.26",
   "platformdirs>=4.3",
+  "psutil>=6.0",
+  "av>=14.0",
+  "python-multipart>=0.0.20",
 ]
 
 [project.optional-dependencies]
+local-fallback = [
+  "moonshine-voice>=0.0.68",
+  "faster-whisper>=1.1",
+  "msvc-runtime>=14.44; platform_system == 'Windows'",
+]
 legacy-local = [
-  "psutil>=6.0",
   "SoundCard>=0.4.3",
   "moonshine-voice>=0.0.68",
   "faster-whisper>=1.1",

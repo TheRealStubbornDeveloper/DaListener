@@ -48,6 +48,12 @@ class SessionStore:
                 note TEXT NOT NULL DEFAULT '',
                 FOREIGN KEY (session_id) REFERENCES sessions(id)
             );
+            CREATE TABLE IF NOT EXISTS meeting_notes (
+                session_id TEXT PRIMARY KEY,
+                notes_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (session_id) REFERENCES sessions(id)
+            );
         """)
         columns = {
             row["name"] for row in self.connection.execute("PRAGMA table_info(transcript_events)")
@@ -82,6 +88,7 @@ class SessionStore:
         with self.lock:
             self.connection.execute("DELETE FROM transcript_events WHERE session_id = ?", (session_id,))
             self.connection.execute("DELETE FROM bookmarks WHERE session_id = ?", (session_id,))
+            self.connection.execute("DELETE FROM meeting_notes WHERE session_id = ?", (session_id,))
             self.connection.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
             self.connection.commit()
 
@@ -135,6 +142,21 @@ class SessionStore:
             return list(self.connection.execute(
                 "SELECT * FROM bookmarks WHERE session_id=? ORDER BY timestamp_ms", (session_id,),
             ))
+
+    def save_notes(self, session_id: str, notes: dict) -> None:
+        with self.lock:
+            self.connection.execute("""
+                INSERT INTO meeting_notes(session_id, notes_json, updated_at) VALUES (?, ?, ?)
+                ON CONFLICT(session_id) DO UPDATE SET notes_json=excluded.notes_json, updated_at=excluded.updated_at
+            """, (session_id, json.dumps(notes, ensure_ascii=False), datetime.now(timezone.utc).isoformat()))
+            self.connection.commit()
+
+    def notes(self, session_id: str) -> dict | None:
+        with self.lock:
+            row = self.connection.execute(
+                "SELECT notes_json FROM meeting_notes WHERE session_id=?", (session_id,),
+            ).fetchone()
+        return json.loads(row["notes_json"]) if row else None
 
     def list_sessions(self, limit: int = 30) -> list[sqlite3.Row]:
         with self.lock:

@@ -5,7 +5,15 @@ export interface Meeting {
   browser: string;
   tab_id: number | null;
   status: MeetingStatus;
-  transcription_provider: "openai";
+  transcription_provider: "openai" | "local";
+  provider_reason: string | null;
+  fallback_active: boolean;
+  compute_device: "cloud" | "cuda" | "metal" | "cpu";
+  openai_audio_seconds: number;
+  estimated_cost_usd: number;
+  transcription_delay_seconds: number[] | null;
+  measured_transcription_lag_seconds: number | null;
+  intelligence_delay_seconds: number[] | null;
   transcription_model: string;
   capture_category: "meeting" | "media" | "other" | "unsupported";
   site_domain: string;
@@ -39,8 +47,16 @@ export interface OpenAIStatus {
 export interface Bootstrap {
   meetings: Meeting[];
   openai: OpenAIStatus;
-  extension_audio_url: string;
+  browser_audio_token: string;
+  provider_mode: "auto" | "cloud" | "local";
+  pricing: Pricing;
+  usage: Usage;
+  local_model: LocalModelStatus;
 }
+
+export interface Pricing { model: string; rate_per_minute_usd: number; rate_per_hour_usd: number; source_url: string; checked_at: string; stale: boolean; }
+export interface Usage { meeting_id?: string | null; session_seconds: number; today_seconds: number; month_seconds: number; session_cost_usd: number; today_cost_usd: number; month_cost_usd: number; estimate_only?: boolean; organization?: Record<string, unknown>; }
+export interface LocalModelStatus { state: string; progress: number; message: string; model_path?: string | null; runtime_path?: string | null; license_url: string; compute_device: string; transcription_ready: boolean; intelligence_ready: boolean; error?: string | null; checksum_sha256?: string | null; recommended_max_tabs?: number; transcription_delay_seconds?: number[]; capability?: Record<string, unknown>; }
 
 export interface DashboardEvent {
   sequence: number;
@@ -60,6 +76,14 @@ export interface IntelligenceNotes {
   suggestion_confident: boolean;
 }
 
-export interface CaptureWarningPreferences {
-  suppressed_domains: string[];
+export interface UploadResult {
+  file_name: string;
+  provider: "cloud" | "local";
+  fallback_reason: string | null;
+  watched_names: string[];
+  transcript: string;
+  segments: {start_seconds: number; end_seconds: number; text: string}[];
+  mentions: {start_seconds: number; end_seconds: number; text: string}[];
+  notes: IntelligenceNotes;
+  saved_path: string;
 }

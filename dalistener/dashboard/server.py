@@ -6,11 +6,12 @@ import secrets
 import socket
 import sys
 import webbrowser
+import json
+import urllib.request
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import Cookie, Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
@@ -19,25 +20,37 @@ from platformdirs import user_data_path
 from pydantic import BaseModel, Field
 
 from .contracts import (
+    BrowserCaptureAck,
+    BrowserCaptureHello,
     BootstrapResponse,
-    CapturePreflightRequest,
-    CapturePreflightResponse,
-    CaptureWarningAcknowledgement,
-    CaptureWarningPreferences,
-    ExtensionAck,
-    ExtensionHello,
 )
 from .events import EventHub
 from .meetings import BrowserMeetingManager
-from .pairing import ExtensionPairingStore
-from .platform import open_folder, synchronize_browser_extension
-from .preferences import CapturePreferenceStore
+from .auth import DashboardLaunchStore
+from .platform import open_folder
+from .provider_mode import ProviderModeStore
 from .settings import OpenAISettingsStore
-from .sources import CaptureCategory, classify_source, warning_message
+from .usage import OpenAIOrganizationUsage
+from .uploads import MediaUploadService
+from .sources import classify_shared_label
 
 
 class OpenAIKeyUpdate(BaseModel):
     api_key: str = Field(min_length=20, max_length=512)
+
+
+class OpenAIAdminKeyUpdate(BaseModel):
+    admin_key: str = Field(min_length=20, max_length=512)
+
+
+class LocalPrepareRequest(BaseModel):
+    accepted_license: bool = False
+
+
+class ProviderSettingsUpdate(BaseModel):
+    api_key: str | None = Field(default=None, min_length=20, max_length=512)
+    admin_key: str | None = Field(default=None, min_length=20, max_length=512)
+    mode: str | None = Field(default=None, pattern="^(auto|cloud|local)$")
 
 
 class MeetingQuestion(BaseModel):
@@ -47,14 +60,13 @@ class MeetingQuestion(BaseModel):
 class DashboardContext:
     def __init__(self, data_dir: Path):
         self.data_dir = data_dir
-        self.launch_token = secrets.token_urlsafe(32)
-        self.extension_token = ExtensionPairingStore(data_dir / "extension-pairing.json").token()
+        self.launch_token = DashboardLaunchStore(data_dir / "dashboard-auth.json").token()
         self.session_token = secrets.token_urlsafe(32)
         self.hub = EventHub()
         self.settings = OpenAISettingsStore()
-        self.capture_preferences = CapturePreferenceStore(data_dir / "preferences.json")
-        self.extension_dir = synchronize_browser_extension(data_dir / "BrowserExtension")
-        self.meetings = BrowserMeetingManager(data_dir, self.hub, self.settings)
+        self.provider_mode = ProviderModeStore(data_dir / "provider-mode.json")
+        self.meetings = BrowserMeetingManager(data_dir, self.hub, self.settings, provider_mode_store=self.provider_mode)
+        self.uploads = MediaUploadService(data_dir, self.settings, self.meetings.local_models, self.provider_mode.load)
         self.port = 0
 
 
@@ -77,15 +89,9 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
             *(context.meetings.stop(meeting.id) for meeting in context.meetings.summaries() if meeting.status != "ended"),
             return_exceptions=True,
         )
+        await context.meetings.intelligence.close()
 
     app = FastAPI(title="DaListener Dashboard API", version="1.0.0", lifespan=lifespan)
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origin_regex=r"^chrome-extension://[a-p]{32}$",
-        allow_credentials=False,
-        allow_methods=["POST", "OPTIONS"],
-        allow_headers=["Content-Type", "X-DaListener-Extension-Token"],
-    )
     app.state.context = context
 
     def require_session(
@@ -94,10 +100,6 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     ) -> None:
         if not secrets.compare_digest(dalistener_session or x_dalistener_token or "", context.session_token):
             raise HTTPException(status_code=401, detail="Dashboard session required")
-
-    def require_extension(x_dalistener_extension_token: str | None = Header(default=None)) -> None:
-        if not secrets.compare_digest(x_dalistener_extension_token or "", context.extension_token):
-            raise HTTPException(status_code=401, detail="Pair the extension from the DaListener dashboard")
 
     @app.get("/auth/exchange", include_in_schema=False)
     async def exchange(token: str = Query(...)):
@@ -115,58 +117,51 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         return response
 
     @app.get("/api/v1/bootstrap", response_model=BootstrapResponse, dependencies=[Depends(require_session)])
-    async def bootstrap(request: Request):
-        scheme = "wss" if request.url.scheme == "https" else "ws"
+    async def bootstrap():
         return BootstrapResponse(
             meetings=context.meetings.summaries(),
             openai=context.meetings.openai_status(),
-            extension_audio_url=f"{scheme}://{request.url.netloc}/api/v1/extension/audio",
+            browser_audio_token=context.session_token,
+            provider_mode=context.provider_mode.load(),
+            pricing=context.meetings.pricing.snapshot(refresh=False).to_dict(),
+            usage=context.meetings.usage.totals(context.meetings.pricing.snapshot(refresh=False).rate_per_minute_usd),
+            local_model=context.meetings.local_models.public_status(),
         )
 
     @app.get("/api/v1/health", include_in_schema=False)
     async def health():
         return {"app": "DaListener", "status": "ready"}
 
-    @app.post("/api/v1/extension/pairing", dependencies=[Depends(require_session)])
-    async def extension_pairing(request: Request):
-        scheme = "wss" if request.url.scheme == "https" else "ws"
-        return {
-            "audio_url": f"{scheme}://{request.url.netloc}/api/v1/extension/audio",
-            "api_url": f"{request.url.scheme}://{request.url.netloc}",
-            "token": context.extension_token,
-        }
+    @app.post("/api/v1/application/stop", dependencies=[Depends(require_session)])
+    async def stop_application():
+        server = getattr(app.state, "uvicorn_server", None)
+        if server is None:
+            raise HTTPException(status_code=503, detail="Application server is not ready")
+        server.should_exit = True
+        return {"ok": True}
 
-    @app.post(
-        "/api/v1/extension/capture-preflight",
-        response_model=CapturePreflightResponse,
-        dependencies=[Depends(require_extension)],
-    )
-    async def capture_preflight(preflight: CapturePreflightRequest):
-        source = classify_source(preflight.url)
-        needs_warning = (
-            source.supported
-            and source.category != CaptureCategory.MEETING
-            and not context.capture_preferences.is_suppressed(source.domain)
-        )
-        return CapturePreflightResponse(
-            supported=source.supported,
-            category=source.category,
-            domain=source.domain,
-            service_label=source.service_label,
-            warning_required=needs_warning,
-            warning_message=warning_message(source) if needs_warning else None,
-        )
-
-    @app.post(
-        "/api/v1/extension/capture-warning/acknowledge",
-        response_model=CaptureWarningPreferences,
-        dependencies=[Depends(require_extension)],
-    )
-    async def acknowledge_capture_warning(acknowledgement: CaptureWarningAcknowledgement):
-        domains = context.capture_preferences.suppressed_domains()
-        if acknowledgement.suppress_for_domain:
-            domains = context.capture_preferences.suppress(acknowledgement.domain)
-        return CaptureWarningPreferences(suppressed_domains=domains)
+    @app.post("/api/v1/uploads/transcribe", dependencies=[Depends(require_session)])
+    async def transcribe_upload(
+        media: UploadFile = File(...),
+        watched_names: str = Form("Vlad,Vladimir"),
+        provider: str = Form("auto", pattern="^(auto|cloud|local)$"),
+    ):
+        suffix = Path(media.filename or "upload.bin").suffix[:16]
+        context.uploads.temp_dir.mkdir(parents=True, exist_ok=True)
+        temporary = context.uploads.temp_dir / f"{secrets.token_hex(16)}{suffix}"
+        total = 0
+        try:
+            with temporary.open("wb") as output:
+                while chunk := await media.read(1024 * 1024):
+                    total += len(chunk)
+                    if total > 4 * 1024**3:
+                        raise HTTPException(status_code=413, detail="Upload exceeds the 4 GB local limit")
+                    output.write(chunk)
+            names = [name.strip() for name in watched_names.split(",") if name.strip()]
+            return await context.uploads.process(temporary, media.filename or "upload", names, provider)
+        finally:
+            await media.close()
+            temporary.unlink(missing_ok=True)
 
     @app.get("/api/v1/meetings", dependencies=[Depends(require_session)])
     async def meetings():
@@ -186,45 +181,83 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         context.hub.publish("openai.updated", None, status.model_dump(mode="json"))
         return status
 
+    @app.put("/api/v1/settings/openai/admin", dependencies=[Depends(require_session)])
+    async def update_openai_admin_settings(update: OpenAIAdminKeyUpdate):
+        try:
+            context.settings.save_admin_key(update.admin_key)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Could not store the Admin key securely: {exc}") from exc
+        return {"configured": True, "message": "OpenAI Admin key stored in the operating-system credential store."}
+
+    @app.get("/api/v1/settings/providers", dependencies=[Depends(require_session)])
+    async def provider_settings():
+        settings = context.settings.load()
+        return {
+            "policy": context.provider_mode.load(),
+            "openai_configured": bool(settings.api_key),
+            "admin_key_configured": bool(settings.admin_key),
+            "local": context.meetings.local_models.public_status(),
+        }
+
+    @app.put("/api/v1/settings/providers", dependencies=[Depends(require_session)])
+    async def update_provider_settings(update: ProviderSettingsUpdate):
+        try:
+            if update.api_key:
+                context.settings.save_api_key(update.api_key)
+            if update.admin_key:
+                context.settings.save_admin_key(update.admin_key)
+            if update.mode:
+                context.provider_mode.save(update.mode)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Could not store provider credentials securely: {exc}") from exc
+        return await provider_settings()
+
+    @app.get("/api/v1/pricing", dependencies=[Depends(require_session)])
+    async def pricing(refresh: bool = True):
+        return (await asyncio.to_thread(context.meetings.pricing.snapshot, refresh)).to_dict()
+
+    @app.get("/api/v1/usage", dependencies=[Depends(require_session)])
+    async def usage(meeting_id: str | None = None, include_organization: bool = False):
+        price = context.meetings.pricing.snapshot(refresh=False)
+        result = context.meetings.usage.totals(price.rate_per_minute_usd, meeting_id)
+        result["estimate_only"] = not bool(context.settings.load().admin_key)
+        if include_organization:
+            result["organization"] = await asyncio.to_thread(OpenAIOrganizationUsage().month, context.settings.load().admin_key)
+        return result
+
+    @app.get("/api/v1/capability", dependencies=[Depends(require_session)])
+    async def capability():
+        return context.meetings.local_models.public_status()
+
+    @app.get("/api/v1/local-model/status", dependencies=[Depends(require_session)])
+    async def local_model_status():
+        return context.meetings.local_models.public_status()
+
+    @app.post("/api/v1/local-model/prepare", dependencies=[Depends(require_session)])
+    async def local_model_prepare(request: LocalPrepareRequest):
+        try:
+            return context.meetings.local_models.start_prepare(request.accepted_license)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/v1/local-model/cancel", dependencies=[Depends(require_session)])
+    async def local_model_cancel():
+        context.meetings.local_models.cancel()
+        return {"ok": True}
+
     @app.post("/api/v1/transcripts/open-folder", dependencies=[Depends(require_session)])
     async def open_transcript_folder():
         path = context.data_dir / "Transcripts"
         open_folder(path)
         return {"ok": True, "path": str(path)}
 
-    @app.post("/api/v1/extension/open-folder", dependencies=[Depends(require_session)])
-    async def open_extension_folder():
-        context.extension_dir = synchronize_browser_extension(context.extension_dir)
-        open_folder(context.extension_dir)
-        return {"ok": True, "path": str(context.extension_dir)}
-
-    @app.get(
-        "/api/v1/settings/capture-warnings",
-        response_model=CaptureWarningPreferences,
-        dependencies=[Depends(require_session)],
-    )
-    async def capture_warning_preferences():
-        return CaptureWarningPreferences(suppressed_domains=context.capture_preferences.suppressed_domains())
-
-    @app.delete(
-        "/api/v1/settings/capture-warnings/{domain}",
-        response_model=CaptureWarningPreferences,
-        dependencies=[Depends(require_session)],
-    )
-    async def remove_capture_warning_preference(domain: str):
-        return CaptureWarningPreferences(suppressed_domains=context.capture_preferences.remove(domain))
-
-    @app.delete(
-        "/api/v1/settings/capture-warnings",
-        response_model=CaptureWarningPreferences,
-        dependencies=[Depends(require_session)],
-    )
-    async def reset_capture_warning_preferences():
-        return CaptureWarningPreferences(suppressed_domains=context.capture_preferences.reset())
-
     @app.get("/api/v1/meetings/{meeting_id}/transcript", dependencies=[Depends(require_session)])
     async def transcript(meeting_id: str):
         return context.meetings.transcript(meeting_id)
+
+    @app.get("/api/v1/meetings/{meeting_id}/notes", dependencies=[Depends(require_session)])
+    async def meeting_notes(meeting_id: str):
+        return context.meetings.store.notes(meeting_id) or {}
 
     @app.post("/api/v1/meetings/{meeting_id}/stop", dependencies=[Depends(require_session)])
     async def stop_meeting(meeting_id: str):
@@ -238,6 +271,16 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"answer": answer}
+
+    @app.post("/api/v1/meetings/{meeting_id}/summarize", dependencies=[Depends(require_session)])
+    async def summarize_meeting(meeting_id: str):
+        notes = await context.meetings.intelligence.summarize(meeting_id)
+        if notes is None:
+            raise HTTPException(
+                status_code=503,
+                detail="No notes were generated. Confirm finalized transcript exists and OpenAI or the local LFM runtime is ready.",
+            )
+        return notes
 
     @app.websocket("/api/v1/events")
     async def events(websocket: WebSocket, since: int = 0):
@@ -261,21 +304,26 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         finally:
             context.hub.unsubscribe(queue)
 
-    @app.websocket("/api/v1/extension/audio")
-    async def extension_audio(websocket: WebSocket):
+    @app.websocket("/api/v1/browser/audio")
+    async def browser_audio(websocket: WebSocket):
+        cookie = websocket.cookies.get("dalistener_session", "")
+        token = websocket.query_params.get("token", "")
+        if not secrets.compare_digest(cookie or token, context.session_token):
+            await websocket.close(code=4401, reason="Dashboard session required")
+            return
         await websocket.accept()
         meeting_id: str | None = None
         try:
-            hello = ExtensionHello.model_validate_json(await websocket.receive_text())
-            if not secrets.compare_digest(hello.token, context.extension_token):
-                await websocket.close(code=4401, reason="Pair the extension from the DaListener dashboard")
-                return
+            hello = BrowserCaptureHello.model_validate_json(await websocket.receive_text())
+            source = classify_shared_label(hello.title)
             runtime = await context.meetings.start_browser_meeting(
-                hello.title, hello.url, hello.tab_id, hello.browser, hello.sample_rate,
+                hello.title, "", None, hello.browser, hello.sample_rate, source,
             )
             meeting_id = runtime.summary.id
-            ack = ExtensionAck(
+            ack = BrowserCaptureAck(
                 meeting_id=meeting_id,
+                title=runtime.summary.title,
+                transcription_provider=runtime.summary.transcription_provider,
                 transcription_model=runtime.summary.transcription_model,
             )
             await websocket.send_text(ack.model_dump_json())
@@ -319,7 +367,12 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
 def main() -> None:
     app = create_app()
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    # Windows permits multiple live listeners to share a port when
+    # SO_REUSEADDR is enabled, which can route authenticated requests to
+    # different DaListener processes. Unix uses the option only for quick
+    # restart after TIME_WAIT.
+    if os.name != "nt":
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     configured_port = os.environ.get("DALISTENER_PORT")
     preferred_port = int(configured_port or "8765")
     try:
@@ -327,19 +380,33 @@ def main() -> None:
     except OSError:
         if configured_port:
             raise
+        try:
+            with urllib.request.urlopen("http://127.0.0.1:8765/api/v1/health", timeout=2) as response:
+                health = json.loads(response.read().decode("utf-8"))
+            if health == {"app": "DaListener", "status": "ready"}:
+                url = f"http://127.0.0.1:8765/auth/exchange?token={app.state.context.launch_token}"
+                print(f"DaListener already running: {url}", flush=True)
+                webbrowser.open(url)
+                sock.close()
+                return
+        except (OSError, ValueError, json.JSONDecodeError):
+            pass
         print(
             "DaListener warning: port 8765 is unavailable; using a temporary port. "
-            "Pair the extension again for this run.",
+            "The dashboard will use the temporary local address for this run.",
             flush=True,
         )
         sock.bind(("127.0.0.1", 0))
     sock.listen(128)
     port = sock.getsockname()[1]
     app.state.context.port = port
+    runtime_path = app.state.context.data_dir / "dashboard-runtime.json"
+    runtime_path.write_text(json.dumps({"port": port, "pid": os.getpid()}), encoding="utf-8")
     url = f"http://127.0.0.1:{port}/auth/exchange?token={app.state.context.launch_token}"
     print(f"DaListener dashboard: {url}", flush=True)
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="info")
     server = uvicorn.Server(config)
+    app.state.uvicorn_server = server
 
     async def serve() -> None:
         async def open_dashboard_when_ready() -> None:
@@ -355,6 +422,12 @@ def main() -> None:
             if not browser_task.done():
                 browser_task.cancel()
             await asyncio.gather(browser_task, return_exceptions=True)
+            try:
+                current = json.loads(runtime_path.read_text(encoding="utf-8"))
+                if current.get("pid") == os.getpid():
+                    runtime_path.unlink(missing_ok=True)
+            except (OSError, ValueError, json.JSONDecodeError):
+                pass
 
     asyncio.run(serve())
 

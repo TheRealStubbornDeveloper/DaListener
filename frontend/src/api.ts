@@ -1,4 +1,4 @@
-import type { Bootstrap, CaptureWarningPreferences, DashboardEvent, TranscriptEvent } from "./types";
+import type { Bootstrap, DashboardEvent, LocalModelStatus, Pricing, TranscriptEvent, UploadResult, Usage } from "./types";
 
 async function json<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -13,16 +13,31 @@ async function json<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   bootstrap: () => json<Bootstrap>("/api/v1/bootstrap"),
   transcript: (meetingId: string) => json<TranscriptEvent[]>(`/api/v1/meetings/${meetingId}/transcript`),
+  notes: (meetingId: string) => json<Record<string, unknown>>(`/api/v1/meetings/${meetingId}/notes`),
   stop: (meetingId: string) => json<{ ok: boolean }>(`/api/v1/meetings/${meetingId}/stop`, { method: "POST" }),
-  pairExtension: () => json<{ audio_url: string; api_url: string; token: string }>("/api/v1/extension/pairing", { method: "POST" }),
   saveOpenAIKey: (apiKey: string) => json("/api/v1/settings/openai", { method: "PUT", body: JSON.stringify({ api_key: apiKey }) }),
+  saveOpenAIAdminKey: (adminKey: string) => json("/api/v1/settings/openai/admin", { method: "PUT", body: JSON.stringify({ admin_key: adminKey }) }),
+  saveProviderMode: (mode: "auto" | "cloud" | "local") => json("/api/v1/settings/providers", { method: "PUT", body: JSON.stringify({ mode }) }),
+  pricing: (refresh = true) => json<Pricing>(`/api/v1/pricing?refresh=${refresh}`),
+  usage: (meetingId?: string, includeOrganization = false) => json<Usage>(`/api/v1/usage?include_organization=${includeOrganization}${meetingId ? `&meeting_id=${encodeURIComponent(meetingId)}` : ""}`),
+  localModel: () => json<LocalModelStatus>("/api/v1/local-model/status"),
+  prepareLocal: (acceptedLicense: boolean) => json<LocalModelStatus>("/api/v1/local-model/prepare", { method: "POST", body: JSON.stringify({ accepted_license: acceptedLicense }) }),
+  cancelLocal: () => json<{ok: boolean}>("/api/v1/local-model/cancel", { method: "POST" }),
   openTranscriptFolder: () => json("/api/v1/transcripts/open-folder", { method: "POST" }),
-  openExtensionFolder: () => json<{ ok: boolean; path: string }>("/api/v1/extension/open-folder", { method: "POST" }),
-  captureWarnings: () => json<CaptureWarningPreferences>("/api/v1/settings/capture-warnings"),
-  removeCaptureWarning: (domain: string) => json<CaptureWarningPreferences>(`/api/v1/settings/capture-warnings/${encodeURIComponent(domain)}`, { method: "DELETE" }),
-  resetCaptureWarnings: () => json<CaptureWarningPreferences>("/api/v1/settings/capture-warnings", { method: "DELETE" }),
+  stopApplication: () => json<{ok: boolean}>("/api/v1/application/stop", { method: "POST" }),
+  summarize: (meetingId: string) => json(`/api/v1/meetings/${meetingId}/summarize`, { method: "POST" }),
   ask: (meetingId: string, question: string) => json<{ answer: string }>(`/api/v1/meetings/${meetingId}/ask`, { method: "POST", body: JSON.stringify({ question }) })
 };
+
+export async function uploadMedia(file: File, watchedNames: string, provider: "auto" | "cloud" | "local"): Promise<UploadResult> {
+  const body = new FormData();
+  body.append("media", file);
+  body.append("watched_names", watchedNames);
+  body.append("provider", provider);
+  const response = await fetch("/api/v1/uploads/transcribe", { method: "POST", credentials: "same-origin", body });
+  if (!response.ok) throw new Error((await response.text()) || `${response.status}`);
+  return response.json() as Promise<UploadResult>;
+}
 
 export function connectEvents(since: number, onEvent: (event: DashboardEvent) => void, onState: (state: string) => void) {
   let stopped = false;

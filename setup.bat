@@ -20,7 +20,7 @@ if not exist ".venv\Scripts\python.exe" (
 )
 call ".venv\Scripts\activate.bat"
 python -m pip install --upgrade pip
-python -m pip install -e .[test]
+python -m pip install -e .[test,local-fallback]
 pushd frontend
 call npm.cmd install
 call npm.cmd run build

@@ -26,6 +26,13 @@
           Description="Open the DaListener transcription dashboard"
           Target="[INSTALLFOLDER]DaListener.exe"
           WorkingDirectory="INSTALLFOLDER" />
+      <Shortcut
+          Id="StopStartMenuShortcut"
+          Name="Stop DaListener"
+          Description="Stop DaListener and all active captures"
+          Target="[INSTALLFOLDER]DaListener.exe"
+          Arguments="--stop"
+          WorkingDirectory="INSTALLFOLDER" />
       <RemoveFolder Id="RemoveProgramMenuFolder" On="uninstall" />
       <RegistryValue
           Root="HKLM"

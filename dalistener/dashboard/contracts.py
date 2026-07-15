@@ -24,6 +24,14 @@ class MeetingSummary(BaseModel):
     tab_id: int | None = None
     status: MeetingStatus
     transcription_provider: str = "openai"
+    provider_reason: str | None = None
+    fallback_active: bool = False
+    compute_device: str = "cloud"
+    openai_audio_seconds: float = 0.0
+    estimated_cost_usd: float = 0.0
+    transcription_delay_seconds: list[float] | None = None
+    measured_transcription_lag_seconds: float | None = None
+    intelligence_delay_seconds: list[float] | None = None
     transcription_model: str = "gpt-realtime-whisper"
     capture_category: CaptureCategory = CaptureCategory.OTHER
     site_domain: str = ""
@@ -66,46 +74,24 @@ class DashboardEvent(BaseModel):
 class BootstrapResponse(BaseModel):
     meetings: list[MeetingSummary]
     openai: OpenAIStatus
-    extension_audio_url: str
+    browser_audio_token: str
+    provider_mode: str = "auto"
+    pricing: dict[str, Any] = Field(default_factory=dict)
+    usage: dict[str, Any] = Field(default_factory=dict)
+    local_model: dict[str, Any] = Field(default_factory=dict)
 
 
-class ExtensionHello(BaseModel):
+class BrowserCaptureHello(BaseModel):
     type: str = "start"
-    token: str
-    tab_id: int
-    title: str
-    url: str = ""
-    browser: str = "Chromium"
+    title: str = Field(min_length=1, max_length=500)
+    browser: str = Field(default="Chromium", max_length=1000)
     sample_rate: int = Field(ge=8_000, le=192_000)
     channels: int = Field(default=1, ge=1, le=2)
 
 
-class ExtensionAck(BaseModel):
+class BrowserCaptureAck(BaseModel):
     type: str = "started"
     meeting_id: str
+    title: str
     transcription_provider: str = "openai"
     transcription_model: str
-
-
-class CapturePreflightRequest(BaseModel):
-    tab_id: int
-    title: str = ""
-    url: str
-
-
-class CapturePreflightResponse(BaseModel):
-    supported: bool
-    category: CaptureCategory
-    domain: str
-    service_label: str
-    warning_required: bool
-    warning_message: str | None = None
-
-
-class CaptureWarningAcknowledgement(BaseModel):
-    domain: str
-    suppress_for_domain: bool = False
-
-
-class CaptureWarningPreferences(BaseModel):
-    suppressed_domains: list[str]

@@ -8,14 +8,13 @@ datas = collect_data_files("dalistener")
 binaries = []
 hiddenimports = []
 
-for package in ("fastapi", "uvicorn", "websockets", "openai", "keyring"):
+for package in ("fastapi", "uvicorn", "websockets", "openai", "keyring", "moonshine_voice", "faster_whisper", "ctranslate2", "onnxruntime"):
     package_datas, package_binaries, package_hidden = collect_all(package)
     datas += package_datas
     binaries += package_binaries
     hiddenimports += package_hidden
 
 datas += [(str(root / "frontend" / "dist"), "frontend")]
-datas += [(str(root / "extension"), "extension")]
 
 analysis = Analysis(
     [str(root / "packaging" / "launcher.py")],

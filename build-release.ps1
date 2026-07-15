@@ -6,7 +6,7 @@ if (-not (Test-Path ".venv\Scripts\python.exe")) {
     throw "Run setup.bat before building a release."
 }
 
-& ".venv\Scripts\python.exe" -m pip install -e ".[build]"
+& ".venv\Scripts\python.exe" -m pip install -e ".[build,local-fallback]"
 if ($LASTEXITCODE -ne 0) { throw "Build dependencies could not be installed." }
 Push-Location "frontend"
 & npm.cmd install

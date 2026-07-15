@@ -74,3 +74,27 @@ def warning_message(source: SourceClassification) -> str:
         "DaListener will send this tab's audio to OpenAI and API charges may apply. "
         "Make sure you have permission to transcribe this content."
     )
+
+
+def classify_shared_label(label: str) -> SourceClassification:
+    """Best-effort classification after the browser's native picker.
+
+    getDisplayMedia deliberately does not reveal the selected tab URL. The
+    browser-provided track label is available only after the user grants
+    access, so known services are recognized from that label and everything
+    else remains a supported generic source.
+    """
+    normalized = label.casefold()
+    meetings = (
+        ("zoom", "Zoom"), ("google meet", "Google Meet"),
+        ("microsoft teams", "Microsoft Teams"), ("teams", "Microsoft Teams"),
+        ("webex", "Webex"),
+    )
+    media = (("youtube", "YouTube"), ("vimeo", "Vimeo"), ("twitch", "Twitch"))
+    for needle, service in meetings:
+        if needle in normalized:
+            return SourceClassification(CaptureCategory.MEETING, "browser-share", service)
+    for needle, service in media:
+        if needle in normalized:
+            return SourceClassification(CaptureCategory.MEDIA, "browser-share", service)
+    return SourceClassification(CaptureCategory.OTHER, "browser-share", "Shared browser tab")

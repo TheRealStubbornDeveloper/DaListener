@@ -63,14 +63,18 @@ class OpenAIRealtimeTranscriber:
         if self.error:
             raise self.error
 
-    def accept(self, pcm_float32: bytes) -> None:
+    def accept(self, pcm_float32: bytes) -> bool:
         try:
             self.queue.put_nowait(pcm_float32)
+            return True
         except asyncio.QueueFull:
             self.dropped_chunks += 1
+            return False
 
     async def close(self) -> None:
         if not self.task:
+            return
+        if asyncio.current_task() is self.task:
             return
         await self.queue.put(None)
         try:
@@ -189,7 +193,7 @@ class OpenAIRealtimeTranscriber:
                 "audio": base64.b64encode(pcm).decode("ascii"),
             }))
             should_commit = speaking and (
-                buffered_ms - last_voice >= 700 or buffered_ms - segment_start >= 15_000
+                buffered_ms - last_voice >= 450 or buffered_ms - segment_start >= 5_000
             )
             if should_commit:
                 self._segments.append(Segment(segment_number, segment_start, last_voice))
