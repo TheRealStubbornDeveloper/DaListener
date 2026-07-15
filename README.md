@@ -102,6 +102,8 @@ Set `OPENAI_API_KEY` to use an environment variable instead of Credential Manage
 
 ## Build the Windows test archive
 
+Download the unsigned portable [DaListener 0.3.0 alpha 1 test build](https://github.com/TheRealStubbornDeveloper/DaListener/releases/tag/v0.3.0-alpha.1), extract the complete folder, and run `DaListener.exe`. Keep `_internal` beside the executable. The unpacked Chromium extension is loaded separately from this repository's `extension` folder.
+
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build-release.ps1
 ```
